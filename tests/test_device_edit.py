@@ -35,9 +35,12 @@ def editor(libs, name: str = "dev-step0.smw") -> Editor:
 
 
 def same_except_name(got: bytes, want: bytes) -> bool:
-    """SIMPL's save also changed PrNm (the file name); nothing else may differ."""
-    g = [ln for ln in got.split(b"\r\n") if not ln.startswith(b"PrNm=")]
-    w = [ln for ln in want.split(b"\r\n") if not ln.startswith(b"PrNm=")]
+    """SIMPL's save also changed PrNm (the file name); nothing else may differ. Pin=True on a
+    logic symbol is display state SIMPL keeps or drops on its own (round 6: dropped in one
+    re-save of the same program, kept in the other), unrelated to devices."""
+    skip = (b"PrNm=", b"Pin=")
+    g = [ln for ln in got.split(b"\r\n") if not ln.startswith(skip)]
+    w = [ln for ln in want.split(b"\r\n") if not ln.startswith(skip)]
     return g == w
 
 
@@ -68,20 +71,38 @@ def test_symbol_counts_match_the_built_in_device_symbols(libs) -> None:
     assert checked >= 8
 
 
-def test_middle_and_last_addresses_split_the_range(libs) -> None:
+@pytest.mark.parametrize("start,steps,want", [
+    # Round 6: SIMPL 4.32 re-saved our files. Middle, first and last addresses, several devices.
+    ("dev-step0.smw", [("TSW-1070", "10"), (232, "FE"), (232, "05"), ("TSW-1070", "03")], "dev-a-saved.smw"),
+    # A public program whose free IP IDs already had a gap (263,265.514); SIMPL's save of the
+    # untouched program is the starting point, so its unrelated tidying cancels out.
+    ("lib-orig-saved.smw", [(232, "0A")], "lib-edit-saved.smw"),
+])
+def test_matches_simpls_resave(libs, start, steps, want) -> None:
+    if not (DATA / want).exists():
+        pytest.skip("round 6 saves not copied here")
+    ed = editor(libs, start)
+    for dev, ad in steps:
+        ed.add_device(libs[1], dev, ad)
+    assert same_except_name(ed.raw.to_bytes(), (DATA / want).read_bytes())
+
+
+def test_free_addresses_stay_in_one_record(libs) -> None:
     ed = editor(libs)
     ed.add_device(libs[1], 232, "0x10")
     ed.add_device(libs[1], "TSW-1070", "FE")
     ed.add_device(libs[1], 232, "05")
     prog = ed.prog
     slots = [(r.get("H"), r.get("Ad")) for r in prog.raw.of_type("Dv") if r.get("Nm") == "P4Ethernet"]
-    assert [a.split(",")[0] for _, a in slots] == ["03", "05", "06", "10", "11", "FE"]
-    assert slots[0][0] == "263.264" and slots[1] == ("265", "05") and slots[3] == ("276", "10")
-    assert slots[-1] == ("514", "FE") and slots[-2][0] == "277.513"
+    assert [h for h, _ in slots] == ["263.264,266.275,277.513", "265", "276", "514"]
+    assert slots[0][1].startswith("03,04,06,") and ",0F,11," in slots[0][1] and slots[0][1].endswith(",FD")
+    ed.add_device(libs[1], 232, "03")  # taking the first address moves the free record down
+    hs = [r.get("H") for r in ed.raw.of_type("Dv") if r.get("Nm") == "P4Ethernet"]
+    assert hs == ["263", "264,266.275,277.513", "265", "276", "514"]
     # The network's symbol lists its devices by address, not by when they were added.
-    net = prog.symbols[7]
-    addrs = [prog.devices[prog.symbols[c].device].address for c in net.children]
-    assert addrs == ["05", "10", "FE"]
+    prog = ed.prog
+    addrs = [prog.devices[prog.symbols[c].device].address for c in prog.symbols[7].children]
+    assert addrs == ["03", "05", "10", "FE"]
     assert structural_problems(prog) == set()
     assert len(list(prog.raw.of_type("Et"))) == 1  # only the TSW has a default IP
 

@@ -5,8 +5,8 @@ EISC at 04 (f12-round5). Every rule here reproduces those files byte for byte, a
 built-in CP4N records in the same file (tests/test_device_edit.py).
 
 What SIMPL writes for a device placed at a free address:
-- The free slot record (one handle, or a range covering many addresses) is split; the
-  slot at the chosen address keeps its handle and gets ``mC=1 C1=<device>``.
+- Every free address of a slot type sits in one record (a handle list with gaps). The
+  slot at the chosen address leaves it, keeps its handle and gets ``mC=1 C1=<device>``.
 - A Dv record for the device (handle = max + 1) and, for each fixed child slot
   (``Expand<n>=FixedSlot``, ``Fixed<n>=<device name>``), a FixedSlot record and the
   child device. A child device carries its slot's SlC; a device on a network does not.
@@ -280,14 +280,14 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
             lines += list(extra)
             return Record(lines=lines)
 
-        pieces = []
-        if i > 0:
-            pieces.append(piece(hs[:i], addrs[:i]))
-        pieces.append(piece([hs[i]], [addr], [("mC", "1"), ("C1", str(dev_h))]))
-        if i + 1 < len(hs):
-            pieces.append(piece(hs[i + 1:], addrs[i + 1:]))
-        # Dv records stay sorted by first handle (true in every corpus file). A range can have
-        # gaps (263,265.514), so a piece may belong further down than the record it came from.
+        # SIMPL keeps every free address of a slot type in ONE record, gaps and all
+        # (263,265.269,271.514): 259 of 259 corpus networks, and its re-save of f12-round6.
+        pieces = [piece([hs[i]], [addr], [("mC", "1"), ("C1", str(dev_h))])]
+        rest = [j for j in range(len(hs)) if j != i]
+        if rest:
+            pieces.append(piece([hs[j] for j in rest], [addrs[j] for j in rest]))
+        # Dv records stay sorted by first handle (true in every corpus file), so taking the
+        # first address moves the free record below the used one.
         ed.raw.items.remove(rec)
         for p in pieces:
             _insert_dv_sorted(ed, p)
