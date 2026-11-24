@@ -561,6 +561,9 @@ class Tools(EditTools):
             "predicted_only": sorted(predicted - got)[:50],
             "file_changed_by_simpl": after != before,
             "revision": after,
+            # Dialogs SIMPL showed (smpc clicks some through); any here deserve a look.
+            "dialogs_seen": r.get("dialogs_seen", []),
+            "dialogs_auto_confirmed": r.get("dialogs_auto_confirmed", []),
             "note": ("SIMPL couldn't compile: see 'output'." if failed else
                      "SIMPL's messages are the final word. If matches_find_problems is false, tell the user; "
                      "it may be a SIMPL Agent rule to fix."),

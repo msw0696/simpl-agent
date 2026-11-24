@@ -57,6 +57,43 @@ def parse_output(text: str) -> dict[str, Any]:
     return {"counts": counts, "messages": messages}
 
 
+SMPC_LOG = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "smpc" / "smpc.log"
+# Dialogs every compile shows; anything else SIMPL put up is reported.
+ROUTINE_DIALOGS = {"Compiling...", "Program Compilation", "Compile Complete"}
+
+
+def dialogs_for(output: str, log_path: Path = SMPC_LOG) -> dict[str, list[str]]:
+    """Dialogs SIMPL showed during this compile, from smpc's log (matched by SIMPL's process id).
+
+    smpc clicks through some dialogs (e.g. 'Commented out Symbols and/or Devices'); those would
+    otherwise be invisible in the compile result.
+    """
+    m = re.search(r"SIMPL Windows process started pid=(\d+)", output)
+    seen: list[str] = []
+    handled: list[str] = []
+    if m and log_path.exists():
+        pid = m.group(1)
+        try:
+            text = log_path.read_text("utf-8", errors="replace")
+        except OSError:
+            text = ""
+        main_found = False
+        for line in text.splitlines():
+            if f"pid={pid}" not in line and not (main_found and ("Auto-confirmed" in line or "Handling '" in line)):
+                continue
+            if "Found main window" in line:
+                main_found = True
+            t = re.search(r'class=#32770 title=(".*?"|\S+)', line)
+            if t:
+                title = t.group(1).strip('"')
+                # A dialog titled just "SIMPL Windows" before the main window is the splash screen.
+                if title not in ROUTINE_DIALOGS and not (title == "SIMPL Windows" and not main_found) and title not in seen:
+                    seen.append(title)
+        handled = [ln.split('msg="', 1)[1].rstrip('"') for ln in output.splitlines() if "Auto-confirmed" in ln
+                   for _ in [0] if 'msg="' in ln] or [ln.strip() for ln in output.splitlines() if "Auto-confirmed" in ln]
+    return {"dialogs_seen": seen, "dialogs_auto_confirmed": handled}
+
+
 def compile_program(path: Path, timeout_s: int = 1500, poll_s: float = 2.0) -> dict[str, Any]:
     if not installed():
         raise CompileError("the compile task isn't installed (see tools/compile_task/setup.ps1)")
@@ -92,5 +129,5 @@ def compile_program(path: Path, timeout_s: int = 1500, poll_s: float = 2.0) -> d
         if res.get("state") == "done":
             output = res.get("output") or ""
             parsed = parse_output(output)
-            return {"exit_code": res.get("exit_code"), **parsed, "output": output[-6000:]}
+            return {"exit_code": res.get("exit_code"), **parsed, **dialogs_for(output), "output": output[-6000:]}
     raise CompileError(f"no result after {timeout_s} s; the compile may still be running")
