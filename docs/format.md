@@ -213,6 +213,12 @@ The program is `bernasbtcnj/crestron` `gpc/dmps3_4k_150_standard.smw`: SIMPL 4.3
   - **A compile error makes module pins vanish.** Compare F12 with `find_problems` only after a clean compile.
 - **No LGCMCVT220 appeared.** `find_problems` had predicted 9, all involving the Lumens camera macros. **Not settled:** it needs a clean compile, after installing .NET Compact Framework 3.5.
 - **Settled the same day.** After installing .NET Compact Framework 3.5 (Microsoft's signed `NETCFSetupv35.msi`, 3.5.7283; Microsoft now offers only localized editions), SIMPL built every SIMPL+ module and **compiled the program with no errors, warnings or notices**. So SIMPL doesn't report LGCMCVT220 when a macro or SIMPL+ module is one of the drivers, and `find_problems` now skips that case. With the fix it reports nothing for this program, matching SIMPL. It's a corpus test (`test_real_job_compiles_clean_like_simpl`).
+- **An edit on the real job passed (2026-11-24).** On a copy, one `apply_edits` call made three changes:
+  - added folder `Projectors\Status`;
+  - added an OR (S-6.29.1) combining both projectors' warming/cooling feedback into a new `Projectors.Any.Busy`;
+  - changed the Show Logo pulse (S-3.2.5) from `1d` to `2s`.
+
+  F12 gave exactly the one predicted notice (`Projectors.Any.Busy` has no destination). SIMPL's re-save kept every edited record as written. It only updated version stamps across the whole program, because the job had been saved with an older database (`SmVr` 1244 -> 1247 on 535 symbols, `DvVr` on 169 devices, and new `DbVr`/`DvcDbVr`).
 - **The desktop .NET Framework 3.5 is a different product.** The `KB…` package doesn't provide the Compact Framework.
 - **The two missing Crestron macros weren't mentioned.** `HD-MD4x1-4K-E v1.0.cmc` and `HD-MD6x2-4K-E v1.1.cmc` aren't in this PC's database, and SIMPL didn't report them in this compile.
 - **Module pin names now come from the modules' own files** (`analysis.module_definition`):
