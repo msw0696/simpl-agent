@@ -112,16 +112,16 @@ def test_refusals_change_nothing(libs) -> None:
     before = ed.raw.to_bytes()
     cases = [
         (("TSW-1070", "03"), "already used"),
-        (("TSW-1070", "02"), "no P4Ethernet slot"),        # 02 is a Not_Used slot
+        (("TSW-1070", "02"), "no .*slot at address 02"),   # 02 is a Not_Used slot
         (("TSW-1070", "1G"), "bad address"),
-        (("TSW-770", "20"), "isn't proven"),
+        ((configurable_device(libs), "20"), "configurable slot"),
         (("No Such Device", "20"), "0 devices named"),
     ]
     for (dev, ad), msg in cases:
         with pytest.raises(EditError, match=msg):
             ed.add_device(libs[1], dev, ad)
         assert ed.raw.to_bytes() == before
-    with pytest.raises(EditError, match="no P4Ethernet slot"):
+    with pytest.raises(EditError, match="no .*slot at address 20"):
         ed.add_device(libs[1], 232, "20", network="Cresnet Devices")
 
 
@@ -130,12 +130,30 @@ def test_addresses_are_normalised(given, want) -> None:
     assert normalise_address(given) == want
 
 
-def test_unproven_devices_are_still_checked_for_shape(libs) -> None:
-    """allow_unproven (tests only) still refuses shapes the builder can't make."""
+def configurable_device(libs) -> int:
+    """An Ethernet device with a card/input slot the user configures (not a fixed child)."""
+    return next(d.code for d in libs[1].devices.values() if "P4Ethernet" in d.occupies and d.symbol_code
+                and any(e != "FixedSlot" for e in d.numbered("Expand")))
+
+
+def test_other_devices_of_a_supported_shape(libs) -> None:
+    """Any device the rules cover can be added, on Ethernet or Cresnet, named by InstanceName."""
+    from simpl_agent.smw.device_edit import instance_name
+
     ed = editor(libs)
-    tsw770 = libs[1].find("TSW-770")[0]
-    ed.add_device(libs[1], tsw770.code, "07", allow_unproven=True)
-    assert structural_problems(ed.prog) == set()
+    ed.add_device(libs[1], "TSW-770", "07")
+    cres = next(d for d in libs[1].devices.values() if "P4Cresnet" in d.occupies and d.symbol_code
+                and not d.numbered("Expand") and d.fields.get("InstanceName")
+                and libs[0].get(d.symbol_code) is not None
+                and not __import__("simpl_agent.smw.device_edit", fromlist=["x"]).symbol_shape_problem(
+                    libs[0].get(d.symbol_code)))
+    ed.add_device(libs[1], cres.code, "25", network="Cresnet Devices")
+    prog = ed.prog
+    assert structural_problems(prog) == set()
+    placed = [d for d in prog.devices.values() if d.code == cres.code]
+    assert placed and placed[0].name == instance_name(cres) and placed[0].address == "25"
+    assert prog.symbols[placed[0].symbol].record.get("Cmn1") == instance_name(cres)
+    assert prog.devices[placed[0].parent].name == "P4Cresnet"
 
 
 def test_apply_edits_adds_a_device_end_to_end(libs, tmp_path: Path) -> None:

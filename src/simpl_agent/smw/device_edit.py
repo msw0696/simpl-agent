@@ -10,14 +10,16 @@ What SIMPL writes for a device placed at a free address:
 - A Dv record for the device (handle = max + 1) and, for each fixed child slot
   (``Expand<n>=FixedSlot``, ``Fixed<n>=<device name>``), a FixedSlot record and the
   child device. A child device carries its slot's SlC; a device on a network does not.
-- A Db record (Whc=3, Mnf=Crestron, Mdl=<name>) for the device on the network, and an
+- Devices are named by iodev InstanceName (else Name). A Db record (Whc=3, Mnf=Crestron, Mdl=<Name>) for the device on the network, and an
   Et record when the library gives the device a default IP address.
 - A logic symbol for each device (``SymbolCode``), the network's container symbol
   listing them in address order. Pin counts come from the symbol library: each of the
   three lists is MinVariable* if given, else Expand_by when the list exists. Only n1I,
   n2I and n1O are stored; mI is every input, mO output lists 1+2, tO every output.
 
-Only devices proven by a real SIMPL save are allowed (``PROVEN_DEVICE_CODES``).
+Any device whose shape these rules cover can be added: its own logic symbol, only fixed child
+slots, and a symbol whose pin counts and parameters follow the rules below. tools/prove_devices.py
+rebuilds every such device in the public corpus; in files saved since SmVr 1200 none differ.
 """
 from __future__ import annotations
 
@@ -34,8 +36,9 @@ if TYPE_CHECKING:
 
 # Device codes whose records were proven by a SIMPL 4.32 save (f12-round5): the device and
 # any fixed children. Others need their own proof round first.
-PROVEN_DEVICE_CODES = {6395, 232}  # TSW-1070 (with TSW-1070 Buttons), Ethernet Intersystem Communications
-PROVEN_SLOTS = {"P4Ethernet"}  # 4-Series Ethernet IP IDs
+# Network ID slots (IP IDs, Cresnet IDs) whose devices follow these rules in the corpus: no SlC, a Db
+# record, free IDs in one record. P4Ethernet is also proven by SIMPL 4.32 saves (f12-round5/6).
+PROVEN_SLOTS = {"P4Ethernet", "P3Ethernet", "MC3Ethernet", "P4Cresnet", "P3Cresnet"}
 NOT_USED = {"Not_Used", "NotUsed"}
 ADDRESS_RE = re.compile(r"^(?:0x)?([0-9A-Fa-f]{1,2})$")
 LISTS = ("", "List2", "List3")
@@ -75,6 +78,10 @@ def symbol_counts(ls: LibSymbol) -> dict[str, int]:
 def symbol_shape_problem(ls: LibSymbol) -> str | None:
     """Why this device symbol's fresh record can't be built yet (None if it can)."""
     f = ls.fields
+    if f.get("CheckCnx") != "random":
+        # 'random' = no pin has to be wired. Others (e.g. none, on CEN-RGBHV switchers and the
+        # Virtual Communication Port) left SIMPL refusing to compile: "Incomplete Symbols" (round 7).
+        return f"its symbol requires some pins to be wired (CheckCnx={f.get('CheckCnx')}), not supported yet"
     for k in ("NumFixedInputs", "NumFixedOutputs", "MinVariableParams"):
         if f.get(k) not in (None, "0"):
             return f"its symbol has {k}, which isn't proven for devices"
@@ -160,6 +167,12 @@ def _insert_dv_sorted(ed: Editor, rec: Record) -> None:
     ed.raw.items.insert(last_dv + 1, rec)
 
 
+def instance_name(dd: DeviceDef) -> str:
+    """The name SIMPL gives a placed device (Dv Nm, its symbol's Cmn1): iodev InstanceName if
+    any, else Name. 3,389 of 3,395 corpus devices with an InstanceName; Db Mdl keeps Name."""
+    return dd.fields.get("InstanceName") or dd.name
+
+
 def find_device_def(devlib: DeviceLibrary, ref: str | int) -> DeviceDef:
     from .edit import EditError
 
@@ -198,16 +211,15 @@ def _plan_children(devlib: DeviceLibrary, dd: DeviceDef) -> list[tuple[str, Devi
 
 
 def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: str | int,
-               network: str | int | None = None, *, allow_unproven: bool = False) -> int:
+               network: str | int | None = None) -> int:
     """Place ``device`` at ``address`` on a network. Returns the device's symbol handle."""
     from .edit import EditError
 
     if ed.lib is None:
         raise EditError("the symbol library isn't available")
     dd = find_device_def(devlib, device)
-    if dd.code not in PROVEN_DEVICE_CODES and not allow_unproven:
-        raise EditError(f"{dd.name} (code {dd.code}) isn't proven yet: adding devices is limited to ones whose "
-                        "records were checked against a real SIMPL save")
+    if dd.symbol_code is None:
+        raise EditError(f"{dd.name} has no logic symbol of its own; it's part of another device")
     try:
         addr = normalise_address(address)
     except ValueError as e:
@@ -216,7 +228,8 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
     # The free slot holding that address, on a network whose slot type the device may occupy.
     slot_types = [s for s in dd.occupies if s in PROVEN_SLOTS]
     if not slot_types:
-        raise EditError(f"{dd.name} doesn't go in a supported slot type (it occupies {dd.occupies[:6]})")
+        raise EditError(f"{dd.name} doesn't go on a supported network (Ethernet IP ID or Cresnet ID); "
+                        f"it occupies {dd.occupies[:6]}")
     candidates = []
     for c in _unique_devices(ed):
         if c.record.get("DvF") == "Sl":
@@ -304,7 +317,7 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
             nxt_sm += 1
 
         # 3. Device records, at the end of the Dv run (their handles are the highest).
-        new_dv = [device_record(name=dd.name, handle=dev_h, parent=hs[i], dd=dd, slot_code=None, dvvr=dvvr,
+        new_dv = [device_record(name=instance_name(dd), handle=dev_h, parent=hs[i], dd=dd, slot_code=None, dvvr=dvvr,
                                 address=addr, symbol=sm_h, db=db_h, et=et_h,
                                 children=[s for s, *_ in child_dv])]
         for n, (s_h, c_h, slot_type, cd, c_sm) in enumerate(child_dv, 1):
@@ -314,7 +327,7 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
                 raise EditError(f"slot type {slot_type} isn't in the device library")
             new_dv.append(slot_record(name=slot_type, handle=s_h, parent=dev_h, slot_code=code, dvvr=dvvr,
                                       address=f"{n:02X}", child=c_h))
-            new_dv.append(device_record(name=cd.name, handle=c_h, parent=s_h, dd=cd, slot_code=code, dvvr=dvvr,
+            new_dv.append(device_record(name=instance_name(cd), handle=c_h, parent=s_h, dd=cd, slot_code=code, dvvr=dvvr,
                                         address=f"{n:02X}", symbol=c_sm, db=None, et=None, children=[]))
         for lines in new_dv:
             _insert_dv_sorted(ed, Record(lines=lines))
@@ -329,11 +342,11 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
 
         # 5. Logic symbols: the device's, then each child's under it.
         ed._insert_record(Record(lines=device_symbol_record(
-            handle=sm_h, ls=lib_syms[0], smvr=smvr, device=dev_h, parent=container.symbol, comment=dd.name,
+            handle=sm_h, ls=lib_syms[0], smvr=smvr, device=dev_h, parent=container.symbol, comment=instance_name(dd),
             children=[c_sm for *_, c_sm in child_dv])), "Sm", after_types=("Bw", "Bk"))
         for (s_h, c_h, slot_type, cd, c_sm), ls in zip(child_dv, lib_syms[1:]):
             ed._insert_record(Record(lines=device_symbol_record(
-                handle=c_sm, ls=ls, smvr=smvr, device=c_h, parent=sm_h, comment=cd.name, children=[])),
+                handle=c_sm, ls=ls, smvr=smvr, device=c_h, parent=sm_h, comment=instance_name(cd), children=[])),
                 "Sm", after_types=("Bw", "Bk"))
 
         # 6. The network's symbol lists its devices in address order.

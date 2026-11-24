@@ -119,7 +119,7 @@ The gate for everything else: can we change a `.smw` file without SIMPL noticing
 - `compile_program` compiles with SIMPL Windows unattended and compares SIMPL's messages with `find_problems`. It uses [smpc](https://github.com/Norgate-AV/smpc) through a one-time elevated scheduled task; see `tools/compile_task/`.
 - **Live result:** a macro and a SIMPL+ module placed in the 478-symbol classroom program compiled with exactly the predicted messages.
 
-**Devices (M4, started 2026-11-24):** `device_tree` and `free_ids` show the device tree and free IP IDs. `apply_edits` can add a TSW-1070 or an EISC at an IP ID you choose (`add_device`), rebuilding SIMPL 4.32's own saves byte for byte.
+**Devices (M4, started 2026-11-24):** `device_tree` and `free_ids` show the device tree and free IP IDs. `apply_edits` can add a device at an IP ID or Cresnet ID you choose (`add_device`): touch panels, XPanels, EISCs and other devices whose pins are all optional. It rebuilds SIMPL 4.32's own saves byte for byte; `tools/prove_devices.py` rebuilds every such device in 380 public programs, and a 15-device batch compiled clean.
 
 **First version done (2026-11-24):** a fresh Claude Code session used SIMPL Agent in plain English to explain a program, check it (matching SIMPL's F12 exactly) and add a One Shot. SIMPL reloaded the edit and compiled it exactly as predicted.
 

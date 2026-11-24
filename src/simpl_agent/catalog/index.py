@@ -16,13 +16,13 @@ from pathlib import Path
 
 from .symlib import DEFAULT_SYMLIB, LibSymbol, SymbolLibrary, parse_tio
 
-INDEX_VERSION = 3
+INDEX_VERSION = 4
 KEEP_FIELDS = {
     "Name", "Code", "Hint", "ObjVer", "Smpl-C", "DeviceCode", "SymbolTree", "ProgramTree",
     "NumFixedInputs", "NumFixedOutputs", "NumFixedParams",
     "MinVariableInputs", "MaxVariableInputs", "MinVariableOutputs", "MaxVariableOutputs",
     "MaxVariableParams", "Expand", "OffsetOutputs", "FixedInputPosition", "SymJam",
-    "CDSReleaseStatus", "HelpID", "Expand_by", "MinVariableParams",
+    "CDSReleaseStatus", "HelpID", "Expand_by", "MinVariableParams", "CheckCnx",
 }
 KEEP_PREFIXES = ("InputCue", "OutputCue", "ParamCue", "InputSigType", "OutputSigType", "ParamSigType", "DefVal",
                  "MinVariableInputsList", "MinVariableOutputsList")
