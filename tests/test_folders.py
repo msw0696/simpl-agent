@@ -5,7 +5,7 @@ import pytest
 from simpl_agent.catalog.symlib import DEFAULT_SYMLIB
 from simpl_agent.corpus import default_roots, iter_files
 from simpl_agent.smw import rawfile
-from simpl_agent.smw.edit import Editor, EditError, folder_lines
+from simpl_agent.smw.edit import EditError, Editor, folder_lines
 from simpl_agent.smw.model import load
 
 
