@@ -102,9 +102,11 @@ class Editor:
             if self.prog.symbols[h].code != FOLDER_CODE:
                 raise EditError(f"#{h} is not a folder")
             return h
+        from ..analysis import display_name  # the name the read tools show (comment's first line)
+
         hits = [
             s.handle for s in self.prog.symbols.values()
-            if s.code == FOLDER_CODE and ((s.comment or s.name or "").rstrip("\\").lower() == ref.lower())
+            if s.code == FOLDER_CODE and display_name(s).lower() == ref.lower()
         ]
         if len(hits) != 1:
             raise EditError(f"{len(hits)} folders named {ref!r}; use a handle")
@@ -276,6 +278,33 @@ class Editor:
             rec.set("mC", "1", after=anchor)
             rec.set("C1", str(child), after="mC")
 
+    def add_folder(self, name: str, parent: str | int = "Logic") -> int:
+        """Add an empty folder (subsystem) inside ``parent``, the way SIMPL 4.3x writes one."""
+        if not name or name != name.strip() or "\\" in name or "\r" in name or "\n" in name or len(name) > MAX_NAME:
+            raise EditError(f"bad folder name {name!r}: one line, no backslashes, up to {MAX_NAME} characters")
+        par = self.find_folder(parent)
+        from ..analysis import display_name
+
+        for c in self.prog.symbols[par].children:
+            s = self.prog.symbols.get(c)
+            if s is not None and s.code == FOLDER_CODE and display_name(s).lower() == name.lower():
+                raise EditError(f"folder {name!r} already exists there (#{c})")
+        snapshot = [it if isinstance(it, str) else Record(lines=list(it.lines), closed=it.closed) for it in self.raw.items]
+        try:
+            h = self._next_handle("Sm")
+            hd = self.prog.header
+            lines = folder_lines(handle=h, smvr=hd.get("SmVr") if hd is not None else None,
+                                 parent=par, name=name, children=[])
+            self._insert_record(Record(lines=lines), "Sm", after_types=("Bw", "Bk"))
+            self._append_child(par, h)
+        except Exception:
+            self.raw.items = snapshot
+            self._reload()
+            raise
+        self._reload()
+        self.log.add(f"added folder {name!r} #{h} in #{par}")
+        return h
+
     def set_comment(self, ref: str | int, text: str) -> None:
         h = self.find_symbol(ref)
         rec = self.prog.symbols[h].record
@@ -285,6 +314,24 @@ class Editor:
         rec.set("Cmn1", text, after=anchor)
         self._reload()
         self.log.add(f"set comment on #{h}")
+
+
+def folder_lines(
+    *, handle: int, smvr: str | None, parent: int, name: str | list[str], children: list[int]
+) -> list[tuple[str | None, str]]:
+    """The record SIMPL 4.3x writes for a folder: Nm=SUBSYSTEM, the name in Cmn1."""
+    lines: list[tuple[str | None, str]] = [
+        ("ObjTp", "Sm"), ("H", str(handle)), ("SmC", str(FOLDER_CODE)), ("Nm", "SUBSYSTEM"), ("ObjVer", "1"),
+    ]
+    if smvr:
+        lines.append(("SmVr", smvr))
+    lines += [("PrH", str(parent)), ("CF", "2")]
+    comments = [name] if isinstance(name, str) else list(name)
+    lines += [(f"Cmn{i}", c) for i, c in enumerate(comments, 1)]
+    if children:
+        lines.append(("mC", str(len(children))))
+        lines += [(f"C{i}", str(c)) for i, c in enumerate(children, 1)]
+    return lines
 
 
 def simple_symbol_lines(
