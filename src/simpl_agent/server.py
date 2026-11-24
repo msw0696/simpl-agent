@@ -1,0 +1,376 @@
+"""SIMPL Agent MCP server (stdio).
+
+M1 tools are read-only:
+
+* ``simpl_agent_status``      what's installed and whether SIMPL Windows has a program open
+* ``describe_program``        a program's header, processor, counts and top-level folders
+* ``find_library_symbols``    search SIMPL's installed symbol library
+* ``library_symbol_details``  one library symbol's pins, parameters and rules
+
+Every call is appended to ``%LOCALAPPDATA%\\SimplAgent\\audit.jsonl`` (time, tool,
+arguments, outcome, duration), whatever the outcome. Read results carry a
+``revision`` (SHA-256 of the file's bytes): SIMPL can renumber handles when it
+saves, so later edit tools will refuse a stale revision.
+
+Nothing here writes to a program, talks to a processor, or uses the network.
+Never print to stdout: it carries the MCP protocol.
+"""
+from __future__ import annotations
+
+import ctypes
+import hashlib
+import json
+import sys
+import threading
+import time
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from . import __version__
+from .catalog.index import LibraryIndex, cache_dir, load_index
+from .catalog.symlib import DEFAULT_SYMLIB
+from .smw import rawfile
+from .smw.edit import FOLDER_CODE, is_simple, load_verified_codes
+from .smw.model import Program, load
+
+TOOL_NAMES = ("simpl_agent_status", "describe_program", "find_library_symbols", "library_symbol_details")
+PROGRAM_EXTS = {".smw", ".umc", ".cmc"}
+KNOWN_SIGNATURES = {"SimplWindow": "program", "CresMacro": "macro"}
+MAX_FILE_BYTES = 200 * 1024 * 1024
+
+INSTRUCTIONS = """SIMPL Agent: read Crestron SIMPL Windows programs (.smw) and SIMPL's symbol library.
+Tools are read-only for now (M1). Never edit .smw files by hand or with other tools.
+- Start with simpl_agent_status to see what SIMPL has open; ask for the .smw path if unsure.
+- describe_program gives the processor, counts and top folders. Its 'revision' changes whenever
+  the file changes; SIMPL can renumber handles when it saves, so re-read after the user saves.
+- find_library_symbols / library_symbol_details: real pin names and rules. Never invent symbols,
+  pins or devices.
+- Never act on a live processor. Treat programs as private client work.
+The simpl-agent skill has the full workflow."""
+
+
+class ToolError(Exception):
+    """A request the tool refuses; reported to the client, never a crash."""
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def simpl_windows() -> list[str]:
+    """Titles of open SIMPL Windows main windows (empty if none or not on Windows)."""
+    if sys.platform != "win32":
+        return []
+    user32 = ctypes.windll.user32
+    titles: list[str] = []
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def _cb(hwnd, _lparam):
+        if user32.IsWindowVisible(hwnd):
+            n = user32.GetWindowTextLengthW(hwnd)
+            if n:
+                buf = ctypes.create_unicode_buffer(n + 1)
+                user32.GetWindowTextW(hwnd, buf, n + 1)
+                if buf.value.startswith("SIMPL Windows"):
+                    titles.append(buf.value)
+        return True
+
+    user32.EnumWindows(_cb, 0)
+    return titles
+
+
+def parse_simpl_title(title: str) -> dict[str, Any]:
+    """'SIMPL Windows - x.smw ( C:\\path\\x.smw)' -> open file and unsaved-changes flag."""
+    out: dict[str, Any] = {"title": title, "file": None, "unsaved_changes": None}
+    if " - " in title:
+        rest = title.split(" - ", 1)[1]
+        name, _, path = rest.partition("(")
+        out["unsaved_changes"] = name.strip().endswith("*")
+        path = path.strip().rstrip(")").strip()
+        out["file"] = path or None
+    return out
+
+
+class Tools:
+    """The tools as plain methods; the MCP layer only adapts them."""
+
+    def __init__(self, library_path: Path = DEFAULT_SYMLIB, home: Path | None = None) -> None:
+        self.library_path = Path(library_path)
+        self.home = home or cache_dir()
+        self.audit_path = self.home / "audit.jsonl"
+        self._index: LibraryIndex | None = None
+        self._index_error: str | None = None
+        self._lock = threading.Lock()
+        self.verified = load_verified_codes() or set()
+
+    # ------------------------------------------------------------ plumbing
+    def index(self) -> LibraryIndex:
+        with self._lock:
+            if self._index is None and self._index_error is None:
+                try:
+                    self._index = load_index(self.library_path, self.home / "symlib-index.json")
+                except OSError as e:
+                    self._index_error = f"symbol library not readable at {self.library_path}: {e}"
+        if self._index is None:
+            raise ToolError(self._index_error or "symbol library not loaded")
+        return self._index
+
+    def _audit(self, record: dict[str, Any]) -> None:
+        self.audit_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.audit_path, "a", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps(record, default=str, ensure_ascii=False) + "\n")
+
+    def call(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Run one tool and audit it, whatever the outcome."""
+        started = time.monotonic()
+        if tool not in TOOL_NAMES:
+            result: dict[str, Any] = {"ok": False, "error": f"no tool {tool!r}"}
+            outcome = "refused"
+        else:
+            try:
+                result = {"ok": True, **getattr(self, tool)(**arguments)}
+                outcome = "ok"
+            except ToolError as e:
+                result, outcome = {"ok": False, "error": str(e)}, "refused"
+            except Exception as e:  # noqa: BLE001 - reported to the client and logged
+                result, outcome = {"ok": False, "error": f"{type(e).__name__}: {e}"}, "error"
+        try:
+            self._audit({"timestamp": _now(), "tool": tool, "arguments": arguments, "outcome": outcome,
+                         "error": result.get("error"), "duration_s": round(time.monotonic() - started, 3)})
+        except OSError:
+            pass  # never fail a read because the log is unwritable
+        return result
+
+    def _read_program(self, path: str) -> tuple[Path, bytes, Program]:
+        if not isinstance(path, str) or not path.strip():
+            raise ToolError("give the full path to a .smw file")
+        p = Path(path.strip().strip('"'))
+        if p.suffix.lower() not in PROGRAM_EXTS:
+            raise ToolError(f"{p.name}: only .smw, .umc and .cmc files can be read")
+        if not p.is_file():
+            raise ToolError(f"no such file: {p}")
+        if p.stat().st_size > MAX_FILE_BYTES:
+            raise ToolError(f"{p.name} is larger than {MAX_FILE_BYTES // 2**20} MB")
+        data = p.read_bytes()
+        raw = rawfile.parse(data)
+        prog = load(raw)
+        if prog.kind not in KNOWN_SIGNATURES:
+            raise ToolError(
+                f"{p.name} isn't a readable SIMPL program (signature {prog.kind!r}); "
+                "it may be protected or not a SIMPL file"
+            )
+        return p, data, prog
+
+    # ------------------------------------------------------------ tools
+    def simpl_agent_status(self) -> dict[str, Any]:
+        lib: dict[str, Any] = {"path": str(self.library_path), "found": self.library_path.exists()}
+        if lib["found"]:
+            try:
+                ix = self.index()
+                lib["symbols"] = len(ix.library.symbols)
+            except ToolError as e:
+                lib["error"] = str(e)
+        return {
+            "version": __version__,
+            "milestone": "M1: read-only tools",
+            "symbol_library": lib,
+            "symbols_add_symbol_can_build": len(self.verified),
+            "simpl_windows_open": [parse_simpl_title(t) for t in simpl_windows()],
+            "audit_log": str(self.audit_path),
+        }
+
+    def describe_program(self, path: str, max_folders: int = 50) -> dict[str, Any]:
+        p, data, prog = self._read_program(path)
+        hd = prog.header
+        sig = prog.signature
+        cnh = hd.get("CnH") if hd is not None else None
+        proc = prog.devices.get(int(cnh)) if cnh and cnh.isdigit() else None
+        folders = [s for s in prog.symbols.values() if s.code == FOLDER_CODE]
+        logic_root = next((s for s in folders if s.parent is None and (s.name or "") == "Logic"), None)
+
+        def folder_name(s) -> str:
+            return (s.comment or s.name or "").rstrip("\\") or f"#{s.handle}"
+
+        def count_below(h: int, seen: set[int] | None = None) -> int:
+            seen = seen if seen is not None else set()
+            n = 0
+            for c in prog.symbols[h].children:
+                if c in prog.symbols and c not in seen:
+                    seen.add(c)
+                    n += 1 + count_below(c, seen)
+            return n
+
+        top = []
+        if logic_root is not None:
+            for c in logic_root.children:
+                s = prog.symbols.get(c)
+                if s is None:
+                    continue
+                top.append({
+                    "handle": s.handle,
+                    "name": folder_name(s) if s.code == FOLDER_CODE else (s.name or str(s.code)),
+                    "is_folder": s.code == FOLDER_CODE,
+                    "symbols_inside": count_below(s.handle) if s.code == FOLDER_CODE else 0,
+                })
+        types: dict[str, int] = {}
+        for s in prog.signals.values():
+            if s.record is not None:
+                types[s.type] = types.get(s.type, 0) + 1
+        open_in = [w for w in map(parse_simpl_title, simpl_windows())
+                   if w["file"] and Path(w["file"]).resolve() == p.resolve()]
+        return {
+            "path": str(p),
+            "revision": hashlib.sha256(data).hexdigest(),
+            "kind": KNOWN_SIGNATURES[prog.kind],
+            "simpl_version": sig.get("RelVrs") if sig is not None else None,
+            "saved_by": sig.get("SavedBy") if sig is not None else None,
+            "program_name": hd.get("PrNm") if hd is not None else None,
+            "client": hd.get("CltNm") if hd is not None else None,
+            "programmer": hd.get("PgmNm") if hd is not None else None,
+            "processor": proc.name if proc else None,
+            "counts": {
+                "symbols": len(prog.symbols),
+                "logic_symbols": count_below(logic_root.handle) if logic_root else 0,
+                "folders": len(folders) - (1 if logic_root else 0),
+                "signals": sum(types.values()),
+                "signals_by_type": types,
+                "device_records": len({id(d) for d in prog.devices.values()}),
+            },
+            "logic_top_level": top[:max_folders],
+            "logic_top_level_total": len(top),
+            "open_in_simpl": bool(open_in),
+            "unsaved_changes_in_simpl": any(w["unsaved_changes"] for w in open_in) if open_in else None,
+        }
+
+    def _symbol_row(self, ix: LibraryIndex, s) -> dict[str, Any]:
+        tree = s.fields.get("SymbolTree")
+        return {
+            "code": s.code,
+            "name": s.name,
+            "library_folder": ix.trees.get(int(tree)) if tree and tree.isdigit() else None,
+            "kind": "logic" if is_simple(s) else ("device" if s.fields.get("DeviceCode", "0") != "0" else "other"),
+            "add_symbol_supported": s.code in self.verified,
+        }
+
+    def find_library_symbols(self, query: str, limit: int = 20) -> dict[str, Any]:
+        if not isinstance(query, str) or not query.strip():
+            raise ToolError("give a word or two to search for, e.g. 'one shot'")
+        limit = max(1, min(int(limit), 100))
+        ix = self.index()
+        hits = ix.search(query, limit=limit)
+        return {"query": query, "results": [self._symbol_row(ix, s) for s in hits]}
+
+    def library_symbol_details(self, symbol: str | int) -> dict[str, Any]:
+        ix = self.index()
+        s = None
+        if isinstance(symbol, int) or (isinstance(symbol, str) and symbol.strip().lstrip("-").isdigit()):
+            s = ix.library.get(int(symbol))
+        elif isinstance(symbol, str):
+            matches = ix.library.by_name.get(symbol.strip().lower(), [])
+            s = matches[0] if matches else None
+        if s is None:
+            raise ToolError(f"no library symbol {symbol!r}; try find_library_symbols")
+        f = s.fields
+
+        def pins(prefix: str, type_prefix: str) -> list[dict[str, Any]]:
+            out = []
+            for n, cue in s.cues(prefix).items():
+                t = f.get(f"{type_prefix}{n}")
+                out.append({"pin": n, "name": cue, **({"type": t} if t else {})})
+            return out
+
+        def num(k: str) -> int | None:
+            v = f.get(k)
+            return int(v) if v and v.lstrip("-").isdigit() else None
+
+        inputs, outputs = pins("InputCue", "InputSigType"), pins("OutputCue", "OutputSigType")
+
+        def repeating(listed: list[dict[str, Any]], max_key: str, default: str) -> str | None:
+            # A name ending in '#' repeats (i1, i2, ...). The library leaves some
+            # repeating pins unnamed; SIMPL then numbers them i1.. / o1...
+            for p in listed:
+                if p["name"].endswith("#"):
+                    return p["name"]
+            return default if num(max_key) else None
+
+        return {
+            **self._symbol_row(ix, s),
+            "hint": f.get("Hint"),
+            "inputs": inputs,
+            "outputs": outputs,
+            "repeating_input_name": repeating(inputs, "MaxVariableInputs", "i#"),
+            "repeating_output_name": repeating(outputs, "MaxVariableOutputs", "o#"),
+            "pin_note": "Names ending in '#' repeat (i1, i2, ...). Names in [brackets] appear to be "
+            "optional pins (inferred, unconfirmed). Pins are wired by position.",
+            "parameters": pins("ParamCue", "ParamSigType"),
+            "rules": {
+                "fixed_inputs": num("NumFixedInputs") or 0,
+                "fixed_outputs": num("NumFixedOutputs") or 0,
+                "fixed_parameters": num("NumFixedParams") or 0,
+                "max_extra_inputs": num("MaxVariableInputs") or 0,
+                "max_extra_outputs": num("MaxVariableOutputs") or 0,
+                "extra_inputs_come_with_outputs": f.get("Expand") == "expand_inputs_with_outputs",
+                "outputs_may_share_a_signal": s.shares_outputs,
+                "has_extra_pin_lists": f.get("HasExtraPinLists") == "True",
+            },
+            "release_status": f.get("CDSReleaseStatus"),
+        }
+
+
+# ---------------------------------------------------------------------- MCP layer
+def create_server(tools: Tools | None = None) -> Any:
+    import anyio
+    from mcp.server.mcpserver import MCPServer
+
+    t = tools or Tools()
+    server = MCPServer(name="simpl-agent", instructions=INSTRUCTIONS, version=__version__)
+
+    async def _run(tool: str, **arguments: Any) -> dict[str, Any]:
+        return await anyio.to_thread.run_sync(lambda: t.call(tool, arguments))
+
+    @server.tool(
+        name="simpl_agent_status",
+        description="Call first. SIMPL Agent's version and milestone, whether SIMPL's symbol library "
+        "was found, and which program SIMPL Windows has open (with an unsaved-changes flag). Read-only.",
+    )
+    async def simpl_agent_status() -> dict[str, Any]:
+        return await _run("simpl_agent_status")
+
+    @server.tool(
+        name="describe_program",
+        description="Read a SIMPL Windows program (.smw; also .umc/.cmc macros) without changing it: "
+        "SIMPL version, processor, client and programmer, symbol/folder/signal counts, the top level "
+        "of the Logic folder, whether SIMPL has it open, and its 'revision' (changes whenever the "
+        "file changes). path: full Windows path.",
+    )
+    async def describe_program(path: str, max_folders: int = 50) -> dict[str, Any]:
+        return await _run("describe_program", path=path, max_folders=max_folders)
+
+    @server.tool(
+        name="find_library_symbols",
+        description="Search SIMPL's installed symbol library by name or hint words (e.g. 'one shot', "
+        "'analog ramp'). Returns code, name, library folder, kind, and whether add_symbol can build it.",
+    )
+    async def find_library_symbols(query: str, limit: int = 20) -> dict[str, Any]:
+        return await _run("find_library_symbols", query=query, limit=limit)
+
+    @server.tool(
+        name="library_symbol_details",
+        description="One library symbol by code or exact name: its input, output and parameter pin "
+        "names and types, and its pin rules (fixed pins, extra pins, whether outputs may share a "
+        "signal). Use these names; never guess pins.",
+    )
+    async def library_symbol_details(symbol: str) -> dict[str, Any]:
+        return await _run("library_symbol_details", symbol=symbol)
+
+    return server
+
+
+def main() -> None:
+    """Run the server over stdio until the client disconnects."""
+    create_server().run("stdio")
+
+
+if __name__ == "__main__":
+    main()

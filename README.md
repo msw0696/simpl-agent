@@ -6,7 +6,14 @@ MCP tools so Claude can read, check and edit Crestron SIMPL Windows (`.smw`) pro
 
 The plan lives in `C:\Users\matth\OneDrive\Documents\SIMPL\PLAN.md`. What we know about the file format is in [docs/format.md](docs/format.md).
 
-## Status: M0 (format proof)
+## Status
+
+**M1 (MCP server), 2026-11-24:** `python -m simpl_agent.server` runs a stdio MCP server with four read-only tools: `simpl_agent_status`, `describe_program`, `find_library_symbols` and `library_symbol_details`.
+- Every call is logged to `%LOCALAPPDATA%\SimplAgentudit.jsonl`.
+- The library index is cached in the same folder.
+- The skill is `skill/simpl-agent/SKILL.md`.
+
+**M0 (format proof): passed in SIMPL 4.32.**
 - Lossless reader and writer (`src/simpl_agent/smw/rawfile.py`) are byte-identical on 3,829 corpus files.
 - A read-only semantic model (`smw/model.py`) covers signals, symbols and devices.
 - A symbol library reader (`catalog/symlib.py`) reads SIMPL's installed `symlib.tio`.
@@ -22,6 +29,7 @@ python -m venv .venv
 .venv\Scripts\python -m pytest -m corpus  # slow tests over the local corpus
 python -I tools/fetch_github_corpus.py    # download public samples (outside the repo)
 python -I tools/corpus_check.py           # measure format rules
+.venv\Scripts\python -m simpl_agent.server # the MCP server (stdio)
 ```
 
 ## Rules

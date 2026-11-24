@@ -9,8 +9,10 @@ description = "MCP tools for reading, checking and editing Crestron SIMPL Window
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }
-# M0 (format proof) needs only the standard library. The MCP SDK arrives in M1.
-dependencies = []
+# Pinned to the MCP SDK version Q-SYS Agent already runs on this PC.
+dependencies = [
+    "mcp==2.3.0",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -18,11 +20,17 @@ dev = [
     "ruff",
 ]
 
+[project.scripts]
+simpl-agent-mcp = "simpl_agent.server:main"
+
 [tool.setuptools.dynamic]
 version = { attr = "simpl_agent.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+simpl_agent = ["catalog/verified_simple_codes.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
