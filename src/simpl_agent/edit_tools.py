@@ -23,6 +23,7 @@ from typing import Any
 
 from . import analysis as an
 from .checks import structural_problems
+from .errors import ToolError
 from .history import History, sha256
 from .smw import rawfile, save
 from .smw.edit import EditError, Editor
@@ -73,8 +74,6 @@ class EditTools:
         return out
 
     def _gate(self, path: str, revision: str, user_confirmed_saved: bool = False) -> tuple[Path, bytes, Any]:
-        from .server import ToolError
-
         p, data, prog = self._read_program(path)
         if p.suffix.lower() != ".smw" or prog.kind != "SimplWindow":
             raise ToolError("only SIMPL Windows programs (.smw) can be edited")
@@ -95,8 +94,6 @@ class EditTools:
 
     @staticmethod
     def _check_ops(edits: Any) -> list[dict[str, Any]]:
-        from .server import ToolError
-
         if not isinstance(edits, list) or not edits:
             raise ToolError("edits must be a non-empty list of operations")
         if len(edits) > 200:
@@ -154,8 +151,6 @@ class EditTools:
     # ------------------------------------------------------------ tools
     def apply_edits(self, path: str, revision: str, summary: str, edits: list[dict[str, Any]],
                     dry_run: bool = False, user_confirmed_saved: bool = False) -> dict[str, Any]:
-        from .server import ToolError
-
         if not isinstance(summary, str) or not summary.strip() or "\n" in summary or len(summary) > SUMMARY_MAX:
             raise ToolError(f"give a one-line summary (up to {SUMMARY_MAX} characters) for the history")
         edits = self._check_ops(edits)
@@ -213,8 +208,6 @@ class EditTools:
         }
 
     def undo_last_edit(self, path: str, revision: str, user_confirmed_saved: bool = False) -> dict[str, Any]:
-        from .server import ToolError
-
         p, data, _ = self._gate(path, revision, user_confirmed_saved)
         hist = History(p)
         target = hist.undo_target()
@@ -234,8 +227,6 @@ class EditTools:
     def restore_version(self, path: str, revision: str, before_entry: int | str,
                         confirm: bool = False, user_confirmed_saved: bool = False) -> dict[str, Any]:
         """Put the file back as it was before history entry ``before_entry`` ('start' = before the first)."""
-        from .server import ToolError
-
         p, data, _ = self._gate(path, revision, user_confirmed_saved or not confirm)
         hist = History(p)
         entries = hist.entries()

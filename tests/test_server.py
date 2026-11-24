@@ -154,6 +154,12 @@ def test_stdio_round_trip(tmp_path: Path, program: Path) -> None:
                 r = json.loads((await session.call_tool(name, args)).content[0].text)
                 # No library is installed in this test's home, so library tools refuse cleanly.
                 assert r["ok"] or name.startswith(("find_library", "library_")), (name, r)
+            # A refused edit over the wire: clean message, audited as "refused", not "error".
+            # (Regression: under `python -m`, server.py is __main__ and had its own ToolError.)
+            bad = json.loads((await session.call_tool("apply_edits", {
+                "path": str(program), "revision": "0" * 64, "summary": "s",
+                "edits": [{"op": "set_comment", "symbol": "#5", "text": "x"}]})).content[0].text)
+            assert not bad["ok"] and bad["error"].startswith("the file has changed"), bad
             return {t.name for t in listed.tools}, payload, init.instructions
 
     names, payload, instructions = anyio.run(run)
@@ -162,6 +168,8 @@ def test_stdio_round_trip(tmp_path: Path, program: Path) -> None:
     assert instructions == INSTRUCTIONS
     log = (tmp_path / "home" / "audit.jsonl").read_text("utf-8")
     assert '"describe_program"' in log
+    last = json.loads(log.strip().splitlines()[-1])
+    assert last["tool"] == "apply_edits" and last["outcome"] == "refused"
 
 
 # ---------------------------------------------------------------- M2 tools

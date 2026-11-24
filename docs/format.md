@@ -193,6 +193,16 @@ The program was a copy of `test01`. Matthew made a change in SIMPL and saved; th
 - **After the reload, compile and save, the file was byte-for-byte what SIMPL Agent wrote** (same revision).
 - **SIMPL's own backup and archive.** SIMPL keeps `<name>.sm2` (the previous version) and `<name>_archive.zip`. The archive holds only the program's files, not `.simpl-agent/`.
 
+### End-to-end test through Claude (2026-11-24)
+A fresh Claude Code session, using only the SIMPL Agent tools and skill, was asked in plain English to explain `live.smw`, check it, and add a One Shot in Room A (triggered by `room_a_both`, a 2-second pulse on `room_a_pulse`).
+
+- **Explanation:** correct, including SIMPL's S-numbers and the commented-out `//test_b`.
+- **Check:** matched F12 exactly.
+- **Edit:** Claude asked Matthew to save in SIMPL first. Its dry run was refused for empty optional pins; it fixed that by wiring them to `0` and the second output to a `//` placeholder. Then it wrote the One Shot at S-2.2.
+- **SIMPL's result:** SIMPL offered to reload, and F12 gave exactly the predicted 1 warning and 1 notice.
+
+**New SIMPL fact: autosave.** SIMPL writes `<name>.smw.ASV`, an autosave of its in-memory copy. Here it held the version from before the edit. An `.ASV` newer than the `.smw` and different from it may show unsaved work in SIMPL. That isn't used yet; it needs checking.
+
 ## 8. Still to learn
 **From the F12 test set (`tools/make_f12_samples.py`):**
 - Whether SIMPL 4.32 loads and compiles our records without complaint (files 01, 02, 11).

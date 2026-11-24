@@ -114,6 +114,8 @@ The gate for everything else: can we change a `.smw` file without SIMPL noticing
 - **Checked against SIMPL 4.32:** ten hand-compiled test files, where `find_problems` printed the same messages SIMPL did. That covers Buffers sharing an output, several analog drivers, `//` placeholder signals, and SIMPL's symbol numbers (`S-2.3`).
 - **Still to confirm:** cases involving SIMPL+ modules or macros, which are marked unconfirmed.
 
+**First version done (2026-11-24):** a fresh Claude Code session used SIMPL Agent in plain English to explain a program, check it (matching SIMPL's F12 exactly) and add a One Shot. SIMPL reloaded the edit and compiled it exactly as predicted.
+
 ### M3: Edit and safety ✅ (live-tested in SIMPL 4.32, 2026-11-24)
 
 - **`apply_edits`**: a batch of operations applied together, all or nothing, with a one-line summary, then a list of any new problems.

@@ -32,6 +32,7 @@ from . import analysis as an
 from .catalog.index import LibraryIndex, cache_dir, load_index
 from .catalog.symlib import DEFAULT_SYMLIB
 from .edit_tools import EditTools
+from .errors import ToolError
 from .smw import rawfile
 from .smw.edit import FOLDER_CODE, is_simple, load_verified_codes
 from .smw.model import Program, load
@@ -62,8 +63,6 @@ Edit only through apply_edits; never edit .smw files by hand or with other tools
 The simpl-agent skill has the full workflow."""
 
 
-class ToolError(Exception):
-    """A request the tool refuses; reported to the client, never a crash."""
 
 
 def _now() -> str:
