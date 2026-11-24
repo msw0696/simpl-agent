@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "pillow",  # tools/simpl_gui.py screenshots
     "pytest",
     "ruff",
 ]

@@ -64,6 +64,8 @@ def _slot_device_rules() -> dict[int, dict]:
 
 
 SLOT_DEVICE_RULES = _slot_device_rules()
+# Card types proven by SIMPL 4.32 saves that the corpus doesn't show (f12-round8).
+SLOT_DEVICE_RULES.setdefault(5917, {"slc": False, "db": True, "seen": 0})  # DMC-4KZ-C-DSP
 
 
 def address_for_slot(address: str | int, slot_info: dict) -> str:
@@ -88,9 +90,32 @@ def normalise_address(address: str | int) -> str:
     return f"{int(m.group(1), 16):02X}"
 
 
+DRIVER_EXPAND = "expand_parameters_with_total_inputs_and_outputs"
+
+
+def _int(v: str | None, default: int = 0) -> int:
+    return int(v) if v and v.isdigit() else default
+
+
+def driver_layout(ls: LibSymbol) -> tuple[int, int, int] | None:
+    """(inputs, outputs, parameters) for serial-driver style symbols: fixed pins plus the variable
+    ones (minimum, at least 1), and a parameter for each fixed one and each variable pin. Matches
+    SIMPL 4.32's COM 2-Way Serial Driver records (6301: 5/3/3, 6361: 3/2/3; f12-round8)."""
+    f = ls.fields
+    if f.get("Expand") != DRIVER_EXPAND:
+        return None
+    vi = _int(f.get("MinVariableInputs"), 1) or 1
+    vo = _int(f.get("MinVariableOutputs"), 1) or 1
+    return (_int(f.get("NumFixedInputs")) + vi, _int(f.get("NumFixedOutputs")) + vo,
+            _int(f.get("NumFixedParams")) + vi + vo)
+
+
 def symbol_counts(ls: LibSymbol) -> dict[str, int]:
     """Pin counts of a freshly placed device symbol, and the stored keys."""
     f = ls.fields
+    drv = driver_layout(ls)
+    if drv is not None:
+        return {"n1I": drv[0], "n2I": 0, "n1O": drv[1], "mI": drv[0], "mO": drv[1], "tO": drv[1]}
 
     def size(direction: str, suffix: str) -> int:
         v = f.get(f"MinVariable{direction}s{suffix}")
@@ -109,10 +134,13 @@ def symbol_counts(ls: LibSymbol) -> dict[str, int]:
 def symbol_shape_problem(ls: LibSymbol) -> str | None:
     """Why this device symbol's fresh record can't be built yet (None if it can)."""
     f = ls.fields
-    if f.get("CheckCnx") != "random":
-        # 'random' = no pin has to be wired. Others (e.g. none, on CEN-RGBHV switchers and the
-        # Virtual Communication Port) left SIMPL refusing to compile: "Incomplete Symbols" (round 7).
-        return f"its symbol requires some pins to be wired (CheckCnx={f.get('CheckCnx')}), not supported yet"
+    if driver_layout(ls) is not None:
+        return None  # serial drivers: parameters are written blank
+    if f.get("CheckCnx") is None and f.get("Expand"):
+        # SIMPL marks these incomplete as soon as they're placed (the Virtual Communication Port, CF=1 in its
+        # own save; f12-round8) and won't compile until they're wired. Without Expand they're fine
+        # (CEN-RGBHV8x4, CEN-IO-COM-102).
+        return "SIMPL marks its symbol incomplete until pins are wired; not supported yet"
     for k in ("NumFixedInputs", "NumFixedOutputs", "MinVariableParams"):
         if f.get(k) not in (None, "0"):
             return f"its symbol has {k}, which isn't proven for devices"
@@ -125,7 +153,7 @@ def symbol_shape_problem(ls: LibSymbol) -> str | None:
 
 def device_record(*, name: str, handle: int, parent: int, dd: DeviceDef, slot_code: str | None, dvvr: str,
                   address: str, symbol: int | None, db: int | None, et: int | None,
-                  children: list[int]) -> list[tuple[str | None, str]]:
+                  children: list[int], cm: int | None = None) -> list[tuple[str | None, str]]:
     f = dd.fields
     lines: list[tuple[str | None, str]] = [
         ("ObjTp", "Dv"), ("Nm", name), ("H", str(handle)), ("PrH", str(parent)), ("DvC", str(dd.code)),
@@ -143,6 +171,8 @@ def device_record(*, name: str, handle: int, parent: int, dd: DeviceDef, slot_co
         lines.append(("DbH", str(db)))
     if et is not None:
         lines.append(("EtH", str(et)))
+    if cm is not None:
+        lines.append(("CmH", str(cm)))
     if children:
         lines.append(("mC", str(len(children))))
         lines += [(f"C{i}", str(c)) for i, c in enumerate(children, 1)]
@@ -150,9 +180,9 @@ def device_record(*, name: str, handle: int, parent: int, dd: DeviceDef, slot_co
 
 
 def slot_record(*, name: str, handles: list[int], parent: int, slot_code: str, dvvr: str, addresses: list[str],
-                child: int | None, slf: str | None = None) -> list[tuple[str | None, str]]:
+                child: int | None, slf: str | None = None, objver: str = "1") -> list[tuple[str | None, str]]:
     lines: list[tuple[str | None, str]] = [
-        ("ObjTp", "Dv"), ("Nm", name), ("H", format_handles(handles)), ("PrH", str(parent)), ("ObjVer", "1"),
+        ("ObjTp", "Dv"), ("Nm", name), ("H", format_handles(handles)), ("PrH", str(parent)), ("ObjVer", objver),
         ("SlC", slot_code), ("DvF", "Sl")]
     if slf:
         lines.append(("SlF", slf))
@@ -160,6 +190,31 @@ def slot_record(*, name: str, handles: list[int], parent: int, slot_code: str, d
     if child is not None:
         lines += [("mC", "1"), ("C1", str(child))]
     return lines
+
+
+CM_KEYS = (("Ptl", "Protocol"), ("Tis", None), ("BRt", "Baud"), ("Pty", "Parity"), ("SBt", "Stopbits"),
+           ("DBt", "Databits"), ("hHs", "HWHandshaking"), ("sHs", "SWHandshaking"))
+
+
+def com_settings(slot_info: dict) -> list[tuple[str, str]] | None:
+    """A COM port's default settings, as SIMPL writes them in a Cm record for the driver placed on it:
+    each Property<n> is 'Name,default,choices...'. Ports without hardware handshaking get no hHs.
+    Key order holds in all 198 modern corpus Cm records; values match SIMPL 4.32's (f12-round8)."""
+    if slot_info.get("Transport") != "COM":
+        return None
+    props = {}
+    for k, v in slot_info.items():
+        if k.startswith("Property"):
+            parts = v.split(",")
+            if len(parts) > 1:
+                props[parts[0]] = parts[1]
+    out = []
+    for key, prop in CM_KEYS:
+        if prop is None:
+            out.append((key, "1"))
+        elif prop in props:
+            out.append((key, props[prop]))
+    return out
 
 
 MAX_SLOTS_PER_RECORD = 501  # 39 of 39 corpus records that hit it
@@ -184,7 +239,9 @@ def slot_layout(devlib: DeviceLibrary, dd: DeviceDef) -> list[tuple[int, str, De
     for pos in range(1, n + 1):
         if pos in expands:
             cur, cur_fixed = expands[pos], None
-            name = dd.fields.get(f"Fixed{pos}")
+            # Fixed<n>: a built-in device. DefDev<n>: the device SIMPL drops in by default (a DM-MD8x8's
+            # "DM Outputs" in slots 17 and 21; SIMPL 4.32 save, f12-round8).
+            name = dd.fields.get(f"Fixed{pos}") or dd.fields.get(f"DefDev{pos}")
             if name:
                 hits = [d for d in devlib.devices.values() if d.name == name]
                 if len(hits) != 1:
@@ -194,41 +251,84 @@ def slot_layout(devlib: DeviceLibrary, dd: DeviceDef) -> list[tuple[int, str, De
     return out
 
 
+def built_in_by_fixed(dd: DeviceDef, pos: int) -> bool:
+    """True if position ``pos`` gets its device from Fixed<n> (a built-in part), not DefDev<n>."""
+    for k in range(pos, 0, -1):
+        if f"Expand{k}" in dd.fields:
+            return bool(dd.fields.get(f"Fixed{k}"))
+    return False
+
+
+def symbol_code_for(dd: DeviceDef, series: str | None) -> int | None:
+    """The logic symbol for this device on this processor family: SymbolCode6 (3- and 4-Series; SIMPL 4.32
+    used it on a CP4N for the Virtual Communication Port and TCP/IP Client, f12-round8), SymbolCode5
+    (2-Series), else SymbolCode."""
+    key = "SymbolCode5" if series == "2" else "SymbolCode6"
+    v = dd.fields.get(key) or dd.fields.get("SymbolCode") or ""
+    return int(v) if v.lstrip("-").isdigit() else None
+
+
+def processor_series(ed: Editor, devlib: DeviceLibrary) -> str | None:
+    hd = ed.prog.header
+    cnh = hd.get("CnH") if hd is not None else None
+    proc = ed.prog.devices.get(int(cnh)) if cnh and cnh.isdigit() else None
+    pdd = devlib.get(proc.code) if proc is not None else None
+    line = (pdd.fields.get("CDSProdLine") or "") if pdd else ""
+    return "2" if "2-Series" in line and "3-Series" not in line and "4-Series" not in line else None
+
+
 class _Build:
     """Records for a device and everything SIMPL puts inside it, numbered depth first."""
 
-    def __init__(self, ed: Editor, devlib: DeviceLibrary, dvvr: str, smvr: str, next_sm: int) -> None:
+    def __init__(self, ed: Editor, devlib: DeviceLibrary, dvvr: str, smvr: str, next_sm: int,
+                 next_cm: int = 1) -> None:
         self.ed, self.devlib, self.dvvr, self.smvr, self.next_sm = ed, devlib, dvvr, smvr, next_sm
+        self.next_cm = next_cm
+        self.cm: list[list[tuple[str | None, str]]] = []
         self.dv: list[list[tuple[str | None, str]]] = []
         self.sm: dict[int, list[tuple[str | None, str]]] = {}
         self.devices = 0
+        self.needs_overrides = False
+        self.series = processor_series(ed, devlib)
 
     def symbol_for(self, dd: DeviceDef):
         from .edit import EditError
 
-        if dd.symbol_code is None:
+        code = symbol_code_for(dd, self.series)
+        if code is None:
             return None
-        ls = self.ed.lib.get(dd.symbol_code) if self.ed.lib is not None else None
+        ls = self.ed.lib.get(code) if self.ed.lib is not None else None
         if ls is None:
-            raise EditError(f"{dd.name}'s logic symbol ({dd.symbol_code}) isn't in the symbol library")
+            raise EditError(f"{dd.name}'s logic symbol ({code}) isn't in the symbol library")
         why = symbol_shape_problem(ls)
         if why:
             raise EditError(f"{dd.name} can't be added yet: {why}")
         return ls
 
     def device(self, dd: DeviceDef, *, handle: int, parent: int, address: str, slot_code: str | None,
-               sym_parent: int, db: int | None = None, et: int | None = None, depth: int = 0) -> tuple[int, list[int]]:
+               sym_parent: int, db: int | None = None, et: int | None = None, depth: int = 0,
+               name_param: str | None = None, slot_info: dict | None = None) -> tuple[int, list[int]]:
         """Build ``dd`` at ``handle``. Returns (next free Dv handle, symbols to list under sym_parent)."""
         from .edit import EditError
 
         self.devices += 1
+        if dd.fields.get("RequiresOverrides") == "True":
+            self.needs_overrides = True
         if depth > 8 or self.devices > 2000:
             raise EditError(f"{dd.name} nests too deeply to build")
         ls = self.symbol_for(dd)
         sym = None
         if ls is not None:
             sym, self.next_sm = self.next_sm, self.next_sm + 1
+        cm = None
+        settings = com_settings(slot_info or {})
+        if settings is not None:
+            cm, self.next_cm = self.next_cm, self.next_cm + 1
+            self.cm.append([("ObjTp", "Cm"), ("H", str(cm)), ("DvH", str(handle))] + settings)
         my_parent_sym = sym if sym is not None else sym_parent
+        # A symbol's Name parameter: the device's own name, except that built-in parts (Fixed<n>)
+        # take the name of the device they belong to (DMC-4KZ-C Advanced -> "DMC-4KZ-C"; f12-round8).
+        name_param = name_param or instance_name(dd)
         nxt, slots, child_syms, empty = handle + 1, [], [], {}
         for pos, typ, fixed in slot_layout(self.devlib, dd):
             info = self.devlib.slots.get(typ)
@@ -243,31 +343,38 @@ class _Build:
                 continue
             ch = nxt
             self.dv.append(slot_record(name=typ, handles=[sh], parent=handle, slot_code=info["Code"], dvvr=self.dvvr,
-                                       addresses=[ad], child=ch, slf=slf))
+                                       addresses=[ad], child=ch, slf=slf, objver=info.get("ObjVer") or "1"))
             nxt, syms = self.device(fixed, handle=ch, parent=sh, address=ad, slot_code=info["Code"],
-                                    sym_parent=my_parent_sym, depth=depth + 1)
+                                    sym_parent=my_parent_sym, depth=depth + 1,
+                                    name_param=name_param if built_in_by_fixed(dd, pos) else None, slot_info=info)
             child_syms += syms
         for typ, rows in empty.items():
             for i in range(0, len(rows), MAX_SLOTS_PER_RECORD):
                 chunk = rows[i:i + MAX_SLOTS_PER_RECORD]
                 self.dv.append(slot_record(name=typ, handles=[r[0] for r in chunk], parent=handle,
                                            slot_code=chunk[0][2]["Code"], dvvr=self.dvvr,
-                                           addresses=[r[1] for r in chunk], child=None, slf=chunk[0][3]))
+                                           addresses=[r[1] for r in chunk], child=None, slf=chunk[0][3],
+                                           objver=chunk[0][2].get("ObjVer") or "1"))
         self.dv.append(device_record(name=instance_name(dd), handle=handle, parent=parent, dd=dd, slot_code=slot_code,
-                                     dvvr=self.dvvr, address=address, symbol=sym, db=db, et=et, children=slots))
+                                     dvvr=self.dvvr, address=address, symbol=sym, db=db, et=et, children=slots,
+                                     cm=cm))
         if sym is None:
             return nxt, child_syms
         self.sm[sym] = device_symbol_record(handle=sym, ls=ls, smvr=self.smvr, device=handle, parent=sym_parent,
-                                            comment=instance_name(dd), children=child_syms)
+                                            comment=instance_name(dd), children=child_syms, name=dd.name,
+                                            name_param=name_param)
         return nxt, [sym]
 
 
 def device_symbol_record(*, handle: int, ls: LibSymbol, smvr: str, device: int, parent: int, comment: str,
-                         children: list[int]) -> list[tuple[str | None, str]]:
+                         children: list[int], name: str | None = None,
+                         name_param: str | None = None) -> list[tuple[str | None, str]]:
+    """``name``: the symbol's Nm, the device's library Name (SIMPL 4.32 wrote 'DM-MD8x8' where the symbol
+    library says 'DM-MD8X8', and 'DM-NVX-36x Stream Transmit' for a device named 'Stream Transmit')."""
     f = ls.fields
     c = symbol_counts(ls)
     lines: list[tuple[str | None, str]] = [
-        ("ObjTp", "Sm"), ("H", str(handle)), ("SmC", str(ls.code)), ("Nm", f.get("Name") or ""),
+        ("ObjTp", "Sm"), ("H", str(handle)), ("SmC", str(ls.code)), ("Nm", name or f.get("Name") or ""),
         ("ObjVer", f.get("ObjVer") or "1"), ("SmVr", smvr), ("DvH", str(device)), ("PrH", str(parent)), ("CF", "2"),
     ]
     lines += [(k, str(c[k])) for k in ("n1I", "n2I", "n1O") if c[k]]
@@ -275,11 +382,17 @@ def device_symbol_record(*, handle: int, ls: LibSymbol, smvr: str, device: int, 
     if children:
         lines.append(("mC", str(len(children))))
         lines += [(f"C{i}", str(x)) for i, x in enumerate(children, 1)]
-    lines += [(k, str(c[k])) for k in ("mI", "mO", "tO") if c[k]]
+    # mO is written, even as 0, whenever there are outputs (20 of 20 corpus records with tO > 0, mO = 0).
+    lines += [(k, str(c[k])) for k in ("mI", "mO", "tO") if c[k] or (k == "mO" and c["tO"])]
+    drv = driver_layout(ls)
+    if drv is not None:
+        lines += [("mP", str(drv[2]))] + [(f"P{i}", "") for i in range(1, drv[2] + 1)]
+        return lines
     n = int(f.get("NumFixedParams") or 0)
     if n:
         lines.append(("mP", str(n)))
-        lines += [(f"P{i}", comment if f[f"ParamCue{i}"] == NAME_PARAM else PARAM_DEFAULTS[f[f"ParamCue{i}"]])
+        lines += [(f"P{i}", (name_param or comment) if f[f"ParamCue{i}"] == NAME_PARAM
+                   else PARAM_DEFAULTS[f[f"ParamCue{i}"]])
                   for i in range(1, n + 1)]
     return lines
 
@@ -432,20 +545,34 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
         sm_h = ed._next_handle("Sm")
         db_h = ed._next_handle("Db") if with_db else None
         et_h = ed._next_handle("Et") if dd.fields.get("DefaultIP") and on_network else None
-        b = _Build(ed, devlib, dvvr, smvr, sm_h)
+        b = _Build(ed, devlib, dvvr, smvr, sm_h, next_cm=ed._next_handle("Cm"))
         b.device(dd, handle=dev_h, parent=hs[i], address=addr, slot_code=slot_code, sym_parent=container.symbol,
+                 slot_info=devlib.slots.get(slot.name or "") or {},
                  db=db_h, et=et_h)
         for lines in b.dv:
             _insert_dv_sorted(ed, Record(lines=lines))
 
+        for lines in b.cm:
+            ed._insert_record(Record(lines=lines), "Cm", after_types=("Dv",))
+
         # 3. Companions: Db (and Et when the device has a default IP).
         if db_h is not None:
-            ed._insert_record(Record(lines=[("ObjTp", "Db"), ("H", str(db_h)), ("DvH", str(dev_h)), ("Whc", "3"),
-                                            ("Mnf", "Crestron"), ("Mdl", dd.name)]), "Db", after_types=("Dv", "Cm"))
+            db_lines = [("ObjTp", "Db"), ("H", str(db_h)), ("DvH", str(dev_h)), ("Whc", "3"), ("Mnf", "Crestron"),
+                        ("Mdl", dd.name)]
+            # Devices with DM label overrides placed on a network also get their description (25 of 25 in the
+            # corpus; SIMPL 4.32 wrote it for a DM-MD8x8, not for its cards or 8 other devices, f12-round8).
+            if on_network and dd.fields.get("RequiresOverrides") == "True" and dd.fields.get("Hint"):
+                db_lines.append(("Tpe", dd.fields["Hint"]))
+            ed._insert_record(Record(lines=db_lines), "Db", after_types=("Dv", "Cm"))
         if et_h is not None:
             ed._insert_record(Record(lines=[("ObjTp", "Et"), ("H", str(et_h)), ("DvH", str(dev_h)),
                                             ("IPM", "255.255.255.0"), ("IPA", dd.fields["DefaultIP"])]),
                               "Et", after_types=("Dv", "Cm", "Db", "Cs", "Bk", "Bw"))
+
+        # A device with DM label overrides makes SIMPL add LabelOverrideStatus=2 at the end of the
+        # header (3 of 3 such corpus programs, 0 of 63 others; SIMPL 4.32 save, f12-round8).
+        if b.needs_overrides and hd is not None and hd.get("LabelOverrideStatus") is None:
+            hd.lines.append(("LabelOverrideStatus", "2"))
 
         # 4. Logic symbols, in handle order.
         for h in sorted(b.sm):

@@ -114,7 +114,7 @@ def test_refusals_change_nothing(libs) -> None:
         (("TSW-1070", "03"), "already used"),
         (("TSW-1070", "02"), "no .*slot at address 02"),   # 02 is a Not_Used slot
         (("TSW-1070", "1G"), "bad address"),
-        (("CEN-RGBHV8x4 (Ethernet)", "20"), "requires some pins"),
+        (("Virtual Communication Port", "20"), "incomplete"),
         (("No Such Device", "20"), "0 devices named"),
     ]
     for (dev, ad), msg in cases:
@@ -233,7 +233,29 @@ def test_cards_go_into_a_frames_slots(libs) -> None:
     assert sym.parent == frame.symbol and sym.record.get("P1") == "DMC-4KZ-C"
     with pytest.raises(EditError, match="already used"):
         ed.add_device(libs[1], "DMC-4KZ-C", "01", network=f"#{frame.handles[0]}")
-    with pytest.raises(EditError, match="isn't supported in a slot yet"):
+    # SIMPL drops its default "DM Outputs" into the output-card slots (DefDev17/21; f12-round8 save).
+    outs = [prog.devices[prog.devices[h].children[0]] for h in dict.fromkeys(frame.children)
+            if prog.devices[h].address in ("17", "21")]
+    assert [d.name for d in outs] == ["DM Outputs", "DM Outputs"]
+    assert prog.header.get("LabelOverrideStatus") == "2"
+    with pytest.raises(EditError, match="already used"):
         ed.add_device(libs[1], "DMCO-22", 17, network=f"#{frame.handles[0]}")
     with pytest.raises(EditError, match="give network"):
         ed.add_device(libs[1], "DMC-4KZ-C", 2)
+
+
+@pytest.mark.parametrize("start,steps,want", [
+    # f12-round8, built in SIMPL 4.32 by SIMPL Agent driving SIMPL's own window (tools/simpl_gui.py).
+    ("frames-step0.smw", [("DM-MD8x8", "03", None)], "frames-step1.smw"),
+    ("frames-step1.smw", [("DMC-4KZ-C-DSP", 1, "#589"), ("DMC-4KZ-C", 2, "#589")], "frames-step2.smw"),
+    ("frames-step2.smw", [("TSW-1070", "04", None), ("DM-NVX-36x", "05", None), ("CEN-IO-COM-102", "07", None),
+                          ("XPanel 2.0 Smart Graphics", "08", None), ("TSW-770", "06", None)], "frames-step3.smw"),
+])
+def test_matches_simpls_frame_saves(libs, start, steps, want) -> None:
+    """Frames, default devices (DefDev), cards, COM drivers with Cm records, Tpe, the header flag."""
+    if not (DATA / want).exists():
+        pytest.skip("round 8 saves not copied here")
+    ed = editor(libs, start)
+    for dev, ad, net in steps:
+        ed.add_device(libs[1], dev, ad, network=net)
+    assert same_except_name(ed.raw.to_bytes(), (DATA / want).read_bytes())
