@@ -107,13 +107,26 @@ class Flow:
 
     drivers: dict[int, list[tuple[int, int]]] = field(default_factory=lambda: defaultdict(list))
     destinations: dict[int, list[tuple[int, int]]] = field(default_factory=lambda: defaultdict(list))
+    # Inside a macro: signals on the Argument Definition (the macro's own pins).
+    arg_in: dict[int, list[tuple[int, int]]] = field(default_factory=lambda: defaultdict(list))
+    arg_out: dict[int, list[tuple[int, int]]] = field(default_factory=lambda: defaultdict(list))
 
 
 def signal_flow(prog: Program) -> Flow:
     f = Flow()
     for s in prog.symbols.values():
         if s.code == ARG_DEFINITION_CODE:
-            continue  # a macro's argument list, not live logic
+            # A macro's argument list, seen from inside the macro: its inputs are the
+            # macro's incoming arguments (sources) and its outputs are the outgoing
+            # arguments (destinations). Measured: undriven-signal counts in installed
+            # macros equal the Argument Definition's input counts when this is ignored.
+            # Kept apart from real drivers: inside macros an incoming argument often
+            # also has a Buffer or module on it, which isn't a second driver.
+            for n, sig in s.inputs.items():
+                f.arg_in[sig].append((s.handle, n))
+            for n, sig in s.outputs.items():
+                f.arg_out[sig].append((s.handle, n))
+            continue
         for n, sig in s.outputs.items():
             f.drivers[sig].append((s.handle, n))
         for n, sig in s.inputs.items():
@@ -175,10 +188,12 @@ def find_problems(prog: Program, lib: SymbolLibrary | None) -> list[Problem]:
             continue
         drv = flow.drivers.get(h, [])
         dst = flow.destinations.get(h, [])
-        if dst and not drv:
+        has_source = bool(drv or flow.arg_in.get(h))
+        goes_out = bool(dst or flow.arg_out.get(h))
+        if dst and not has_source:
             out.append(Problem("warning", "LGCMCVT102", f'Signal "{sg.name}" has no driving source.',
                                signal=sg.name, symbols=sorted({s for s, _ in dst})))
-        if drv and not dst:
+        if drv and not goes_out:
             out.append(Problem("notice", "LGCMCVT103", f'Signal "{sg.name}" has no destination.',
                                signal=sg.name, symbols=sorted({s for s, _ in drv})))
         if len(drv) > 1 and sg.type == "digital":

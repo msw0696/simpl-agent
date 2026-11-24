@@ -143,6 +143,19 @@ def test_stdio_round_trip(tmp_path: Path, program: Path) -> None:
             listed = await session.list_tools()
             res = await session.call_tool("describe_program", {"path": str(program)})
             payload = json.loads(res.content[0].text)
+            # Every other tool answers over the wire too.
+            calls = {
+                "simpl_agent_status": {}, "folder_tree": {"path": str(program)},
+                "list_folder": {"path": str(program)}, "show_symbol": {"path": str(program), "symbol": "#5"},
+                "find_signals": {"path": str(program)},
+                "follow_signal": {"path": str(program), "signal": "room_out"},
+                "find_problems": {"path": str(program)},
+                "find_library_symbols": {"query": "or"}, "library_symbol_details": {"symbol": "3"},
+            }
+            for name, args in calls.items():
+                r = json.loads((await session.call_tool(name, args)).content[0].text)
+                # No library is installed in this test's home, so library tools refuse cleanly.
+                assert r["ok"] or name.startswith(("find_library", "library_")), (name, r)
             return {t.name for t in listed.tools}, payload, init.instructions
 
     names, payload, instructions = anyio.run(run)
@@ -158,7 +171,7 @@ def test_folder_tree_and_list_folder(tools: Tools, program: Path) -> None:
     t = tools.call("folder_tree", {"path": str(program)})
     assert t["ok"] and t["root"] == "#4" and t["logic_symbols"] == 2 and t["folders"] == []
     f = tools.call("list_folder", {"path": str(program)})
-    assert [(r["symbol"], r["position"]) for r in f["symbols"]] == [("#5", "S-1"), ("#6", "S-2")]
+    assert [(r["symbol"], r["position_in_folder"]) for r in f["symbols"]] == [("#5", "S-1"), ("#6", "S-2")]
     assert f["symbols"][1]["comment"] == "a note"
     assert not tools.call("list_folder", {"path": str(program), "folder": "#5"})["ok"]
     assert not tools.call("list_folder", {"path": str(program), "folder": "Nowhere"})["ok"]
@@ -166,7 +179,7 @@ def test_folder_tree_and_list_folder(tools: Tools, program: Path) -> None:
 
 def test_show_symbol(tools: Tools, program: Path) -> None:
     r = tools.call("show_symbol", {"path": str(program), "symbol": "#6"})
-    assert r["ok"] and r["position"] == "S-2" and r["comment"] == "a note"
+    assert r["ok"] and r["position_in_folder"] == "S-2" and r["comment"] == "a note"
     assert r["inputs"] == [{"pin": 1, "name": "i1", "signal": "room_out", "type": "digital"}]
     assert r["outputs"][0]["signal"] == "room_text$" and r["parameters"][0]["value"] == "5s"
     assert not tools.call("show_symbol", {"path": str(program), "symbol": "#99"})["ok"]

@@ -12,7 +12,7 @@ Needs Windows with SIMPL Windows installed (it reads SIMPL's own symbol library)
 - status and overview: `simpl_agent_status`, `describe_program`;
 - navigating: `folder_tree`, `list_folder`, `show_symbol`;
 - tracing: `find_signals`, `follow_signal`;
-- checking: `find_problems`, which uses SIMPL 4.32's own codes LGCMCVT102/103/220 and matches SIMPL's compiler on every file compiled so far;
+- checking: `find_problems`, which uses SIMPL 4.32's own codes LGCMCVT102/103/220. It gave SIMPL's exact warning and notice counts on all six test files compiled so far (a small set). The Buffer, analog/serial and `//` exemptions, and macro files, are still unconfirmed;
 - the library: `find_library_symbols`, `library_symbol_details`.
 - Every call is logged to `%LOCALAPPDATA%\SimplAgentudit.jsonl`.
 - The library index is cached in the same folder.

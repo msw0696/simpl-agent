@@ -421,7 +421,7 @@ class Tools:
             s = prog.symbols.get(c)
             if s is None:
                 continue
-            row: dict[str, Any] = {"symbol": f"#{c}", "position": f"S-{pos}", "name": an.display_name(s, lib),
+            row: dict[str, Any] = {"symbol": f"#{c}", "position_in_folder": f"S-{pos}", "name": an.display_name(s, lib),
                                    "is_folder": an.is_folder(s)}
             if s.comment and not an.is_folder(s):
                 row["comment"] = "\n".join(an.comment_lines(s))
@@ -453,7 +453,7 @@ class Tools:
         return {
             "path": str(p), "revision": rev, "symbol": f"#{h}", "name": an.display_name(s, lib),
             "library": {"code": s.code, "name": ls.name if ls else None},
-            "folder": an.folder_path(prog, h, lib), "position": f"S-{pos}" if pos else None,
+            "folder": an.folder_path(prog, h, lib), "position_in_folder": f"S-{pos}" if pos else None,
             "is_folder": an.is_folder(s), "comment": "\n".join(comments) or None,
             "complete": {"2": True, "1": False}.get(s.record.get("CF") or "", None),
             "device": f"#{s.device}" if s.device is not None else None,
@@ -496,10 +496,15 @@ class Tools:
 
         sg = prog.signals[h]
         drv, dst = flow.drivers.get(h, []), flow.destinations.get(h, [])
-        return {"path": str(p), "revision": rev, "signal": sg.name, "handle": f"#{h}", "type": sg.type,
-                "built_in": sg.record is None,
-                "driven_by": ends(drv, "O"), "goes_to": ends(dst, "I"),
-                "totals": {"driven_by": len(drv), "goes_to": len(dst)}}
+        out = {"path": str(p), "revision": rev, "signal": sg.name, "handle": f"#{h}", "type": sg.type,
+               "built_in": sg.record is None,
+               "driven_by": ends(drv, "O"), "goes_to": ends(dst, "I"),
+               "totals": {"driven_by": len(drv), "goes_to": len(dst)}}
+        if flow.arg_in.get(h):
+            out["macro_input_argument"] = [f"I{n}" for _, n in flow.arg_in[h]]
+        if flow.arg_out.get(h):
+            out["macro_output_argument"] = [f"O{n}" for _, n in flow.arg_out[h]]
+        return out
 
     def find_problems(self, path: str, limit: int = 200) -> dict[str, Any]:
         p, rev, prog, lib = self._load(path)
@@ -508,9 +513,14 @@ class Tools:
         for x in probs:
             counts[x.severity] = counts.get(x.severity, 0) + 1
         shown, page = self._page([x.as_dict() for x in probs], 0, limit, cap=2000)
-        return {"path": str(p), "revision": rev, "counts": counts, "problems": shown, "page": page,
-                "note": "Codes LGCMCVT102/103/220 match SIMPL 4.32's compiler messages; SA-* are SIMPL "
-                        "Agent's own. SIMPL's compile (F12) is the final word."}
+        out = {"path": str(p), "revision": rev, "counts": counts, "problems": shown, "page": page,
+               "note": "Codes LGCMCVT102/103/220 follow SIMPL 4.32's compiler messages (checked on a small "
+                       "set of compiled files); SA-* are SIMPL Agent's own. S-n positions are inferred. "
+                       "SIMPL's compile (F12) is the final word."}
+        if prog.kind == "CresMacro":
+            out["macro_note"] = ("This is a macro. Its arguments are treated as its inputs and outputs; "
+                                 "results for macros haven't been checked against SIMPL yet.")
+        return out
 
 
 # ---------------------------------------------------------------------- MCP layer
@@ -565,7 +575,8 @@ def create_server(tools: Tools | None = None) -> Any:
         return await _run("folder_tree", path=path, max_depth=max_depth, limit=limit)
 
     @server.tool(name="list_folder", description="The symbols in one folder, in SIMPL's order (position "
-                 "S-n), with handle, name, comment and pin counts. folder: 'Logic' (default), a folder "
+                 "S-n within the folder; that this matches SIMPL's own S-numbers is inferred), with handle, "
+                 "name, comment and pin counts. folder: 'Logic' (default), a folder "
                  "handle like '#25', or a folder name. Paged with offset/limit.")
     async def list_folder(path: str, folder: str = "Logic", offset: int = 0, limit: int = 100) -> dict[str, Any]:
         return await _run("list_folder", path=path, folder=folder, offset=offset, limit=limit)

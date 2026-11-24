@@ -86,6 +86,20 @@ def test_pin_labels(tiny: bytes, code: int, letter: str, n: int, expected: str) 
     assert an.pin_label(lib().get(code), prog.symbols[5], letter, n) == expected
 
 
+def test_macro_arguments_are_sources_and_sinks(tiny: bytes) -> None:
+    # An Argument Definition (SmC 55): its inputs are the macro's incoming arguments,
+    # its outputs the outgoing ones. Put room_enable/room_level on its inputs and
+    # room_text$ on its output: the 102s and the 103 go away.
+    argdef = (b"[\r\nObjTp=Sm\r\nH=9\r\nSmC=55\r\nmI=2\r\nI1=4\r\nI2=5\r\n"
+              b"mO=1\r\ntO=1\r\nO1=7\r\n]\r\n[\r\nObjTp=Sg\r\nH=4")
+    data = tiny.replace(b"[\r\nObjTp=Sg\r\nH=4", argdef, 1)
+    prog = load(rawfile.parse(data))
+    assert not an.find_problems(prog, lib())
+    # An argument is a source, but not a driver that could clash with a real one.
+    flow = an.signal_flow(prog)
+    assert flow.arg_in[4] == [(9, 1)] and flow.drivers.get(4, []) == []
+
+
 def test_folder_path_and_position(tiny: bytes) -> None:
     prog = load(rawfile.parse(tiny))
     assert an.folder_path(prog, 6) == "Logic"
@@ -101,7 +115,7 @@ def _f12_dir() -> Path | None:
     return None
 
 
-# What SIMPL 4.32 reported when Matthew compiled each file (2026-11-24).
+# What SIMPL 4.32 reported when each file was compiled by hand (2026-11-24).
 SIMPL_SAID = {
     "00-control-empty/test00.smw": (0, 0),
     "01-add-or/test01.smw": (2, 1),
