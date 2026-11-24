@@ -41,7 +41,7 @@ TOOL_NAMES = (
     "simpl_agent_status", "describe_program", "find_library_symbols", "library_symbol_details",
     "folder_tree", "list_folder", "show_symbol", "find_signals", "follow_signal", "find_problems",
     "apply_edits", "edit_history", "undo_last_edit", "restore_version", "wait_for_simpl_save",
-    "module_details", "compile_program",
+    "module_details", "compile_program", "device_tree", "free_ids",
 )
 PROGRAM_EXTS = {".smw", ".umc", ".cmc"}
 KNOWN_SIGNATURES = {"SimplWindow": "program", "CresMacro": "macro", "UserMacro": "macro"}
@@ -525,6 +525,37 @@ class Tools(EditTools):
             out["macro_output_argument"] = [f"O{n}" for _, n in flow.arg_out[h]]
         return out
 
+    def _device_library(self):
+        from .catalog.devices import DEFAULT_IODEV, load_devices
+
+        if getattr(self, "_devlib", None) is None:
+            try:
+                self._devlib = load_devices(DEFAULT_IODEV, self.home / "iodev-index.json")
+            except OSError:
+                self._devlib = None
+        return self._devlib
+
+    def device_tree(self, path: str, limit: int = 300) -> dict[str, Any]:
+        from . import devices as dv
+
+        p, rev, prog, lib = self._load(path)
+        rows = dv.device_rows(prog, limit=max(1, min(int(limit), 2000)))
+        hd = prog.header
+        cnh = hd.get("CnH") if hd is not None else None
+        proc = prog.devices.get(int(cnh)) if cnh and cnh.isdigit() else None
+        return {"path": str(p), "revision": rev, "processor": proc.name if proc else None,
+                "devices": rows, "count": len(rows)}
+
+    def free_ids(self, path: str, network: str = "") -> dict[str, Any]:
+        from . import devices as dv
+
+        p, rev, prog, lib = self._load(path)
+        nets = dv.networks(prog, self._device_library())
+        if network:
+            want = network.lower()
+            nets = [n for n in nets if want in (n["network"] or "").lower() or want in (n["transport"] or "").lower()]
+        return {"path": str(p), "revision": rev, "networks": nets}
+
     def compile_program(self, path: str, timeout_s: int = 1500) -> dict[str, Any]:
         """Compile with SIMPL Windows (via the installed compile task) and compare SIMPL's
         messages with find_problems."""
@@ -726,6 +757,18 @@ def create_server(tools: Tools | None = None) -> Any:
                  "apply_edits instead of asking the user to press F12.")
     async def compile_program(path: str, timeout_s: int = 1500) -> dict[str, Any]:
         return await _run("compile_program", path=path, timeout_s=timeout_s)
+
+    @server.tool(name="device_tree", description="Every device in the program (processor, cards, Ethernet "
+                 "and Cresnet devices, ports): its handle, name, device code, address (IP ID / Cresnet ID / "
+                 "port), where it sits, model, IP address and logic symbol. Read-only.")
+    async def device_tree(path: str, limit: int = 300) -> dict[str, Any]:
+        return await _run("device_tree", path=path, limit=limit)
+
+    @server.tool(name="free_ids", description="Free and used IDs on each of the program's networks (Ethernet "
+                 "IP IDs, Cresnet IDs, ports). network filters by name or transport, e.g. 'Ethernet'. Read-only; "
+                 "never pick an IP ID for the user without asking.")
+    async def free_ids(path: str, network: str = "") -> dict[str, Any]:
+        return await _run("free_ids", path=path, network=network)
 
     @server.tool(name="edit_history", description="SIMPL Agent's change history for a program (newest "
                  "last), and whether the file changed outside SIMPL Agent since the last change.")
