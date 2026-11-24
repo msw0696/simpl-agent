@@ -7,19 +7,23 @@ built-in CP4N records in the same file (tests/test_device_edit.py).
 What SIMPL writes for a device placed at a free address:
 - Every free address of a slot type sits in one record (a handle list with gaps). The
   slot at the chosen address leaves it, keeps its handle and gets ``mC=1 C1=<device>``.
-- A Dv record for the device (handle = max + 1) and, for each fixed child slot
-  (``Expand<n>=FixedSlot``, ``Fixed<n>=<device name>``), a FixedSlot record and the
-  child device. A child device carries its slot's SlC; a device on a network does not.
-- Devices are named by iodev InstanceName (else Name). A Db record (Whc=3, Mnf=Crestron, Mdl=<Name>) for the device on the network, and an
-  Et record when the library gives the device a default IP address.
-- A logic symbol for each device (``SymbolCode``), the network's container symbol
-  listing them in address order. Pin counts come from the symbol library: each of the
-  three lists is MinVariable* if given, else Expand_by when the list exists. Only n1I,
-  n2I and n1O are stored; mI is every input, mO output lists 1+2, tO every output.
+- The device's own slots: position n has slot type ``Expand<n>`` (a missing n repeats the
+  previous type and its fixed device), up to MaxSlots. ``Fixed<n>`` names a device SIMPL puts
+  there itself, recursively. Handles go depth first: device, then each position's slot followed
+  by the subtree of its fixed device. Empty slots of one type share a record (at most 501 slots,
+  then another record). Slot addresses are decimal unless the slot type says HEX; IR and power
+  slots carry ``SlF=Ex``. A device in a slot carries the slot's SlC; one on a network doesn't.
+- Devices are named by iodev InstanceName (else Name). A Db record (Whc=3, Mnf=Crestron,
+  Mdl=<Name>) for the device on the network, and an Et record when the library gives the
+  device a default IP address.
+- A logic symbol for each device that has one (``SymbolCode``), under the nearest ancestor's
+  symbol; the network's container symbol lists its devices in address order. Pin counts come
+  from the symbol library: each of the three lists is MinVariable* if given, else Expand_by
+  when the list exists. Only n1I, n2I and n1O are stored; mI is every input, mO output lists
+  1+2, tO every output.
 
-Any device whose shape these rules cover can be added: its own logic symbol, only fixed child
-slots, and a symbol whose pin counts and parameters follow the rules below. tools/prove_devices.py
-rebuilds every such device in the public corpus; in files saved since SmVr 1200 none differ.
+Any device whose shape these rules cover can be added. tools/prove_devices.py rebuilds every
+such device subtree in the public corpus and compares it with what SIMPL saved.
 """
 from __future__ import annotations
 
@@ -93,7 +97,7 @@ def symbol_shape_problem(ls: LibSymbol) -> str | None:
 
 
 def device_record(*, name: str, handle: int, parent: int, dd: DeviceDef, slot_code: str | None, dvvr: str,
-                  address: str, symbol: int, db: int | None, et: int | None,
+                  address: str, symbol: int | None, db: int | None, et: int | None,
                   children: list[int]) -> list[tuple[str | None, str]]:
     f = dd.fields
     lines: list[tuple[str | None, str]] = [
@@ -102,8 +106,10 @@ def device_record(*, name: str, handle: int, parent: int, dd: DeviceDef, slot_co
     ]
     if slot_code is not None:
         lines.append(("SlC", slot_code))
-    lines += [("DvVr", dvvr), ("Ad", address), ("SmH", str(symbol)),
-              ("RelStat", f.get("CDSReleaseStatus") or "Release")]
+    lines += [("DvVr", dvvr), ("Ad", address)]
+    if symbol is not None:
+        lines.append(("SmH", str(symbol)))
+    lines.append(("RelStat", f.get("CDSReleaseStatus") or "Release"))
     if f.get("CDSProdLine"):
         lines.append(("ProdLine", f["CDSProdLine"]))
     if db is not None:
@@ -116,10 +122,117 @@ def device_record(*, name: str, handle: int, parent: int, dd: DeviceDef, slot_co
     return lines
 
 
-def slot_record(*, name: str, handle: int, parent: int, slot_code: str, dvvr: str, address: str,
-                child: int) -> list[tuple[str | None, str]]:
-    return [("ObjTp", "Dv"), ("Nm", name), ("H", str(handle)), ("PrH", str(parent)), ("ObjVer", "1"),
-            ("SlC", slot_code), ("DvF", "Sl"), ("DvVr", dvvr), ("Ad", address), ("mC", "1"), ("C1", str(child))]
+def slot_record(*, name: str, handles: list[int], parent: int, slot_code: str, dvvr: str, addresses: list[str],
+                child: int | None, slf: str | None = None) -> list[tuple[str | None, str]]:
+    lines: list[tuple[str | None, str]] = [
+        ("ObjTp", "Dv"), ("Nm", name), ("H", format_handles(handles)), ("PrH", str(parent)), ("ObjVer", "1"),
+        ("SlC", slot_code), ("DvF", "Sl")]
+    if slf:
+        lines.append(("SlF", slf))
+    lines += [("DvVr", dvvr), ("Ad", ",".join(addresses))]
+    if child is not None:
+        lines += [("mC", "1"), ("C1", str(child))]
+    return lines
+
+
+MAX_SLOTS_PER_RECORD = 501  # 39 of 39 corpus records that hit it
+
+
+def slot_address(slot_info: dict, pos: int) -> str:
+    return f"{pos:02X}" if slot_info.get("AddressFormat") == "HEX" else f"{pos:02d}"
+
+
+def slot_layout(devlib: DeviceLibrary, dd: DeviceDef) -> list[tuple[int, str, DeviceDef | None]]:
+    """[(position, slot type, fixed device or None)] for positions 1..max(MaxSlots, last Expand).
+
+    A position without its own Expand<n> repeats the previous one, fixed device included
+    (an ST-IO's relays fill positions 5-12 from Expand5/Fixed5)."""
+    from .edit import EditError
+
+    expands = {int(k[6:]): v for k, v in dd.fields.items() if k.startswith("Expand") and k[6:].isdigit()}
+    if not expands:
+        return []
+    n = max(int(dd.fields.get("MaxSlots") or 0), max(expands))
+    out, cur, cur_fixed = [], "NotUsed", None
+    for pos in range(1, n + 1):
+        if pos in expands:
+            cur, cur_fixed = expands[pos], None
+            name = dd.fields.get(f"Fixed{pos}")
+            if name:
+                hits = [d for d in devlib.devices.values() if d.name == name]
+                if len(hits) != 1:
+                    raise EditError(f"{dd.name}'s fixed device {name!r} isn't in the device library exactly once")
+                cur_fixed = hits[0]
+        out.append((pos, cur, cur_fixed))
+    return out
+
+
+class _Build:
+    """Records for a device and everything SIMPL puts inside it, numbered depth first."""
+
+    def __init__(self, ed: Editor, devlib: DeviceLibrary, dvvr: str, smvr: str, next_sm: int) -> None:
+        self.ed, self.devlib, self.dvvr, self.smvr, self.next_sm = ed, devlib, dvvr, smvr, next_sm
+        self.dv: list[list[tuple[str | None, str]]] = []
+        self.sm: dict[int, list[tuple[str | None, str]]] = {}
+        self.devices = 0
+
+    def symbol_for(self, dd: DeviceDef):
+        from .edit import EditError
+
+        if dd.symbol_code is None:
+            return None
+        ls = self.ed.lib.get(dd.symbol_code) if self.ed.lib is not None else None
+        if ls is None:
+            raise EditError(f"{dd.name}'s logic symbol ({dd.symbol_code}) isn't in the symbol library")
+        why = symbol_shape_problem(ls)
+        if why:
+            raise EditError(f"{dd.name} can't be added yet: {why}")
+        return ls
+
+    def device(self, dd: DeviceDef, *, handle: int, parent: int, address: str, slot_code: str | None,
+               sym_parent: int, db: int | None = None, et: int | None = None, depth: int = 0) -> tuple[int, list[int]]:
+        """Build ``dd`` at ``handle``. Returns (next free Dv handle, symbols to list under sym_parent)."""
+        from .edit import EditError
+
+        self.devices += 1
+        if depth > 8 or self.devices > 2000:
+            raise EditError(f"{dd.name} nests too deeply to build")
+        ls = self.symbol_for(dd)
+        sym = None
+        if ls is not None:
+            sym, self.next_sm = self.next_sm, self.next_sm + 1
+        my_parent_sym = sym if sym is not None else sym_parent
+        nxt, slots, child_syms, empty = handle + 1, [], [], {}
+        for pos, typ, fixed in slot_layout(self.devlib, dd):
+            info = self.devlib.slots.get(typ)
+            if not info or not info.get("Code"):
+                raise EditError(f"{dd.name}: slot type {typ} isn't in the device library")
+            sh, nxt = nxt, nxt + 1
+            slots.append(sh)
+            ad = slot_address(info, pos)
+            slf = "Ex" if info.get("Transport") in ("IR", "Power") else None
+            if fixed is None:
+                empty.setdefault(typ, []).append((sh, ad, info, slf))
+                continue
+            ch = nxt
+            self.dv.append(slot_record(name=typ, handles=[sh], parent=handle, slot_code=info["Code"], dvvr=self.dvvr,
+                                       addresses=[ad], child=ch, slf=slf))
+            nxt, syms = self.device(fixed, handle=ch, parent=sh, address=ad, slot_code=info["Code"],
+                                    sym_parent=my_parent_sym, depth=depth + 1)
+            child_syms += syms
+        for typ, rows in empty.items():
+            for i in range(0, len(rows), MAX_SLOTS_PER_RECORD):
+                chunk = rows[i:i + MAX_SLOTS_PER_RECORD]
+                self.dv.append(slot_record(name=typ, handles=[r[0] for r in chunk], parent=handle,
+                                           slot_code=chunk[0][2]["Code"], dvvr=self.dvvr,
+                                           addresses=[r[1] for r in chunk], child=None, slf=chunk[0][3]))
+        self.dv.append(device_record(name=instance_name(dd), handle=handle, parent=parent, dd=dd, slot_code=slot_code,
+                                     dvvr=self.dvvr, address=address, symbol=sym, db=db, et=et, children=slots))
+        if sym is None:
+            return nxt, child_syms
+        self.sm[sym] = device_symbol_record(handle=sym, ls=ls, smvr=self.smvr, device=handle, parent=sym_parent,
+                                            comment=instance_name(dd), children=child_syms)
+        return nxt, [sym]
 
 
 def device_symbol_record(*, handle: int, ls: LibSymbol, smvr: str, device: int, parent: int, comment: str,
@@ -188,28 +301,6 @@ def find_device_def(devlib: DeviceLibrary, ref: str | int) -> DeviceDef:
     return hits[0]
 
 
-def _plan_children(devlib: DeviceLibrary, dd: DeviceDef) -> list[tuple[str, DeviceDef]]:
-    """[(slot type, child device)] for the device's fixed slots; refuses other shapes."""
-    from .edit import EditError
-
-    expands = dd.numbered("Expand")
-    fixed = dd.numbered("Fixed")
-    out = []
-    for i, slot in enumerate(expands, 1):
-        child_name = dd.fields.get(f"Fixed{i}")
-        if slot != "FixedSlot" or not child_name:
-            raise EditError(f"{dd.name} has a configurable slot ({slot}); only fixed child slots are supported")
-        hits = [d for d in devlib.devices.values() if d.name == child_name]
-        if len(hits) != 1:
-            raise EditError(f"{dd.name}'s fixed child {child_name!r} isn't in the device library exactly once")
-        if hits[0].numbered("Expand"):
-            raise EditError(f"{child_name} has slots of its own; not supported yet")
-        out.append((slot, hits[0]))
-    if len(fixed) != len(out):
-        raise EditError(f"{dd.name}'s fixed children don't match its slots")
-    return out
-
-
 def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: str | int,
                network: str | int | None = None) -> int:
     """Place ``device`` at ``address`` on a network. Returns the device's symbol handle."""
@@ -255,18 +346,7 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
     if container.symbol is None or container.symbol not in ed.prog.symbols:
         raise EditError(f"network {container.name} has no logic symbol to put the device under")
 
-    children = _plan_children(devlib, dd)
-    lib_syms = []
-    for d in [dd] + [c for _, c in children]:
-        code = d.symbol_code
-        ls = ed.lib.get(code) if code is not None else None
-        if ls is None:
-            raise EditError(f"{d.name}'s logic symbol ({code}) isn't in the symbol library")
-        why = symbol_shape_problem(ls)
-        if why:
-            raise EditError(f"{d.name} can't be added yet: {why}")
-        lib_syms.append(ls)
-
+    _Build(ed, devlib, "", "", 0).symbol_for(dd)  # refuse unsupported symbols before changing anything
     hd = ed.prog.header
     smvr = (hd.get("SmVr") if hd is not None else None) or ""
     dvvr = slot.record.get("DvVr") or ""
@@ -305,34 +385,17 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
         for p in pieces:
             _insert_dv_sorted(ed, p)
 
-        # 2. Handles for everything new.
+        # 2. The device and everything SIMPL puts inside it, numbered depth first.
         sm_h = ed._next_handle("Sm")
         db_h = ed._next_handle("Db")
         et_h = ed._next_handle("Et") if dd.fields.get("DefaultIP") else None
-        child_dv = []  # (slot handle, device handle, slot type, def, symbol handle)
-        nxt_dv, nxt_sm = dev_h + 1, sm_h + 1
-        for slot_type, cd in children:
-            child_dv.append((nxt_dv, nxt_dv + 1, slot_type, cd, nxt_sm))
-            nxt_dv += 2
-            nxt_sm += 1
-
-        # 3. Device records, at the end of the Dv run (their handles are the highest).
-        new_dv = [device_record(name=instance_name(dd), handle=dev_h, parent=hs[i], dd=dd, slot_code=None, dvvr=dvvr,
-                                address=addr, symbol=sm_h, db=db_h, et=et_h,
-                                children=[s for s, *_ in child_dv])]
-        for n, (s_h, c_h, slot_type, cd, c_sm) in enumerate(child_dv, 1):
-            info = devlib.slots.get(slot_type) or {}
-            code = info.get("Code")
-            if not code:
-                raise EditError(f"slot type {slot_type} isn't in the device library")
-            new_dv.append(slot_record(name=slot_type, handle=s_h, parent=dev_h, slot_code=code, dvvr=dvvr,
-                                      address=f"{n:02X}", child=c_h))
-            new_dv.append(device_record(name=instance_name(cd), handle=c_h, parent=s_h, dd=cd, slot_code=code, dvvr=dvvr,
-                                        address=f"{n:02X}", symbol=c_sm, db=None, et=None, children=[]))
-        for lines in new_dv:
+        b = _Build(ed, devlib, dvvr, smvr, sm_h)
+        b.device(dd, handle=dev_h, parent=hs[i], address=addr, slot_code=None, sym_parent=container.symbol,
+                 db=db_h, et=et_h)
+        for lines in b.dv:
             _insert_dv_sorted(ed, Record(lines=lines))
 
-        # 4. Companions: Db (and Et when the device has a default IP).
+        # 3. Companions: Db (and Et when the device has a default IP).
         ed._insert_record(Record(lines=[("ObjTp", "Db"), ("H", str(db_h)), ("DvH", str(dev_h)), ("Whc", "3"),
                                         ("Mnf", "Crestron"), ("Mdl", dd.name)]), "Db", after_types=("Dv", "Cm"))
         if et_h is not None:
@@ -340,14 +403,9 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
                                             ("IPM", "255.255.255.0"), ("IPA", dd.fields["DefaultIP"])]),
                               "Et", after_types=("Dv", "Cm", "Db", "Cs", "Bk", "Bw"))
 
-        # 5. Logic symbols: the device's, then each child's under it.
-        ed._insert_record(Record(lines=device_symbol_record(
-            handle=sm_h, ls=lib_syms[0], smvr=smvr, device=dev_h, parent=container.symbol, comment=instance_name(dd),
-            children=[c_sm for *_, c_sm in child_dv])), "Sm", after_types=("Bw", "Bk"))
-        for (s_h, c_h, slot_type, cd, c_sm), ls in zip(child_dv, lib_syms[1:]):
-            ed._insert_record(Record(lines=device_symbol_record(
-                handle=c_sm, ls=ls, smvr=smvr, device=c_h, parent=sm_h, comment=instance_name(cd), children=[])),
-                "Sm", after_types=("Bw", "Bk"))
+        # 4. Logic symbols, in handle order.
+        for h in sorted(b.sm):
+            ed._insert_record(Record(lines=b.sm[h]), "Sm", after_types=("Bw", "Bk"))
 
         # 6. The network's symbol lists its devices in address order.
         ed._reload()
@@ -366,5 +424,5 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
         raise
     ed._reload()
     ed.log.add(f"added {dd.name} at {slot.name} {addr} on {container.name}: device #{dev_h}, symbol #{sm_h}"
-               + (f" (+{len(child_dv)} fixed child)" if child_dv else ""))
+               + (f" (+{b.devices - 1} devices inside it)" if b.devices > 1 else ""))
     return sm_h

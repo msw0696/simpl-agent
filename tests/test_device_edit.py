@@ -114,7 +114,7 @@ def test_refusals_change_nothing(libs) -> None:
         (("TSW-1070", "03"), "already used"),
         (("TSW-1070", "02"), "no .*slot at address 02"),   # 02 is a Not_Used slot
         (("TSW-1070", "1G"), "bad address"),
-        ((configurable_device(libs), "20"), "configurable slot"),
+        (("CEN-RGBHV8x4 (Ethernet)", "20"), "requires some pins"),
         (("No Such Device", "20"), "0 devices named"),
     ]
     for (dev, ad), msg in cases:
@@ -130,10 +130,23 @@ def test_addresses_are_normalised(given, want) -> None:
     assert normalise_address(given) == want
 
 
-def configurable_device(libs) -> int:
-    """An Ethernet device with a card/input slot the user configures (not a fixed child)."""
-    return next(d.code for d in libs[1].devices.values() if "P4Ethernet" in d.occupies and d.symbol_code
-                and any(e != "FixedSlot" for e in d.numbered("Expand")))
+def test_frames_get_every_slot_and_fixed_device(libs) -> None:
+    """A device with its own slots: each position in its own place, fixed devices inside, depth first."""
+    from simpl_agent.smw.device_edit import slot_layout
+
+    ed = editor(libs)
+    st_io = libs[1].find("ST-IO")[0]
+    ed.add_device(libs[1], st_io.code, "40", network="Cresnet Devices")
+    prog = ed.prog
+    assert structural_problems(prog) == set()
+    dev = next(d for d in prog.devices.values() if d.code == st_io.code)
+    lay = slot_layout(libs[1], st_io)
+    slots = [prog.devices[h] for h in dict.fromkeys(dev.children)]
+    assert [s.name for s in slots] == [t for _, t, _ in lay]
+    assert [s.address for s in slots] == [f"{p:02d}" for p, _, _ in lay]
+    # Depth first: slot, its device, next slot ...
+    assert [h for s in slots for h in (s.handles[0], s.children[0])] == list(range(dev.handles[0] + 1, dev.handles[0] + 1 + 2 * len(lay)))
+    assert all(prog.devices[s.children[0]].record.get("SlC") == s.record.get("SlC") for s in slots)
 
 
 def test_other_devices_of_a_supported_shape(libs) -> None:
