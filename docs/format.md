@@ -133,13 +133,41 @@ A simple rule ("each signal has at most one driver") is wrong. It flags most val
 - Their `CF` and `ObjVer` look like everyone else's.
 - Treating `CF != 2` (or a folder with `CF != 2`) as disabled clears only 186 cases. So "disabled symbols" is not the explanation.
 
-**Next:** test file `03-two-drivers` (an OR and an AND both driving one signal) goes through SIMPL 4.32. If SIMPL rejects it, the corpus cases need another explanation; if it accepts it, the rule really is "allowed". **Until then, `check_program` reports these as warnings, not errors**, and `edit_program` refuses to add a second driver.
+**Settled by SIMPL 4.32 (2026-11-24, test file `03-two-drivers`):** an OR and an AND both driving `test_out` loads and compiles with **0 errors**. SIMPL gives 3 warnings (`test_a`, `test_b`, `test_out`) and 1 notice. Two drivers on a digital signal is a **warning**, not an error. `check_program` reports it as a warning, and `edit_program` still refuses to create one unless asked.
 
-## 7. Still to learn
+## 7. SIMPL 4.32 reload and compile results (2026-11-24)
+| Test | Result |
+|---|---|
+| `00` control (empty CP4N) | 0 errors, as predicted. |
+| `01` add OR plus 3 signals | 0 errors, 2 warnings, 1 notice, as predicted. **SIMPL's re-save wrote our new records back byte-for-byte**, apart from bumping `SmVr` 1230 → 1247, which it does to every symbol. |
+| `02` rename | Same messages as 01, with the new name, as predicted. |
+| `03` two drivers | 0 errors, 3 warnings, 1 notice (see section 6). |
+| `10` control (public PRO3 demo) | 0 warnings and 0 notices. |
+| `11` rename a signal in `10` | 0 warnings and 0 notices, as predicted. After both are re-saved, **the only differences from `10` are the new name and the file name.** |
+
+**The M0 gate is passed:** all six files behaved as predicted. Every edited file, once re-saved by SIMPL, differs from its re-saved control only by the intended change.
+
+**SIMPL's compiler messages, word for word (from `03`):**
+```
+WARNING(LGCMCVT220) ** Signal "test_out" on symbol S-2 has a previously defined driving source.
+WARNING(LGCMCVT102) ** Signal "test_a" has no driving source.
+NOTICE (LGCMCVT103) ** Signal "test_out" has no destination.
+```
+- `S-2` is the AND, the second symbol in `Logic`. "S-n" seems to be the symbol's position in its folder, not its handle (#22).
+- `check_program` will use the same codes and wording: LGCMCVT220 for a second driver, LGCMCVT102 for no source, LGCMCVT103 for no destination.
+
+**What SIMPL changes on re-save** (from the `00` control):
+- `RelVrs`, `PrNm` (the file name), `DbVr` and `DvcDbVr`.
+- Every `SmVr` and `DvVr` is bumped to the running version.
+- Nothing else changes, and line endings stay CRLF.
+- `SavedBy` stayed 4.30 on the empty program but changed to 4.32 on the PRO3 demo. It may only change when SIMPL alters content.
+- **SIMPL can renumber handles on save.** Upgrading the older PRO3 demo (processor `ObjVer` 6 → 7) moved records and renumbered device handles (the `C*` lists changed) and symbol handles. It also dropped one `Db` record and moved a `Cm` record's settings.
+  - **Handles are not stable across a SIMPL save.** After SIMPL saves, re-read the file before any further edit, and never replay old handles blindly. `reapply` must find symbols and signals again by name or position.
+
+## 8. Still to learn
 **From the F12 test set (`tools/make_f12_samples.py`):**
 - Whether SIMPL 4.32 loads and compiles our records without complaint (files 01, 02, 11).
 - What SIMPL changes when it re-saves a file we wrote. Both bases were saved by 4.30, so a 4.32 save rewrites version fields everywhere. Compare re-saved `01` with re-saved `00`, and `11` with `10`, not with `_as_written`.
-- How SIMPL picks a new handle (gaps or max+1).
 - The two-drivers question.
 
 **Still unknown:**
