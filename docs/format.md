@@ -179,6 +179,20 @@ Each file started from the same empty CP4N program. **SIMPL printed exactly the 
 
 **SIMPL's re-saves of all four** differed from what we wrote only in version stamps. That includes the new folder record from `add_folder` and the Analog Initialize records.
 
+### Round 3: a live edit with SIMPL open (2026-11-24)
+The program was a copy of `test01`. Matthew made a change in SIMPL and saved; then SIMPL Agent edited the file while SIMPL had it open. The edit added folder `Room A`, an AND inside it, and renamed `test_or` to `room_a_any`.
+
+- **No unsaved-changes marker.** SIMPL 4.32 shows nothing readable while it has unsaved changes. The title, the child windows and the files on disk don't change, and the File menu's state is only refreshed when the menu opens. So `apply_edits` asks for the user's confirmation that they saved (`user_confirmed_saved`) whenever SIMPL has the file open.
+- **"Commenting out" a signal on a pin renames it to `//name`.** SIMPL wrote a new `Sg` record with handle **max+1** (7, not the free 5), re-pointed the pin to it, and **dropped the old signal now that nothing used it**. Both match what the editor does.
+- **No lock.** SIMPL doesn't lock an open program, so SIMPL Agent's atomic write succeeded with SIMPL open.
+- **SIMPL notices the change and offers to reload.** Matthew clicked Yes. The new folder and AND appeared, and F12 gave exactly the predicted messages:
+  ```
+  WARNING(LGCMCVT102) ** Signal "test_a" has no driving source.
+  NOTICE (LGCMCVT103) ** Signal "room_a_both" has no destination.
+  ```
+- **After the reload, compile and save, the file was byte-for-byte what SIMPL Agent wrote** (same revision).
+- **SIMPL's own backup and archive.** SIMPL keeps `<name>.sm2` (the previous version) and `<name>_archive.zip`. The archive holds only the program's files, not `.simpl-agent/`.
+
 ## 8. Still to learn
 **From the F12 test set (`tools/make_f12_samples.py`):**
 - Whether SIMPL 4.32 loads and compiles our records without complaint (files 01, 02, 11).

@@ -114,16 +114,14 @@ def test_status_without_library(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "title,file,unsaved",
+    "title,file",
     [
-        ("SIMPL Windows - a.smw ( C:\\x\\a.smw)", "C:\\x\\a.smw", False),
-        ("SIMPL Windows - a.smw* ( C:\\x\\a.smw)", "C:\\x\\a.smw", True),
-        ("SIMPL Windows", None, None),
+        ("SIMPL Windows - a.smw ( C:\\x\\a.smw)", "C:\\x\\a.smw"),
+        ("SIMPL Windows", None),
     ],
 )
-def test_parse_simpl_title(title: str, file, unsaved) -> None:
-    r = parse_simpl_title(title)
-    assert r["file"] == file and r["unsaved_changes"] == unsaved
+def test_parse_simpl_title(title: str, file) -> None:
+    assert parse_simpl_title(title)["file"] == file
 
 
 def test_stdio_round_trip(tmp_path: Path, program: Path) -> None:

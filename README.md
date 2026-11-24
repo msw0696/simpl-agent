@@ -114,7 +114,7 @@ The gate for everything else: can we change a `.smw` file without SIMPL noticing
 - **Checked against SIMPL 4.32:** ten hand-compiled test files, where `find_problems` printed the same messages SIMPL did. That covers Buffers sharing an output, several analog drivers, `//` placeholder signals, and SIMPL's symbol numbers (`S-2.3`).
 - **Still to confirm:** cases involving SIMPL+ modules or macros, which are marked unconfirmed.
 
-### M3: Edit and safety 🚧 (built; live test in SIMPL pending)
+### M3: Edit and safety ✅ (live-tested in SIMPL 4.32, 2026-11-24)
 
 - **`apply_edits`**: a batch of operations applied together, all or nothing, with a one-line summary, then a list of any new problems.
   - **Operations:** add a folder, add a symbol, connect or disconnect a pin, set a parameter, set a comment, rename a signal, rename a folder, move a symbol, and remove a symbol.
@@ -122,7 +122,7 @@ The gate for everything else: can we change a `.smw` file without SIMPL noticing
 - **Write gate.** A write must pass all of these, or nothing is written:
   - the file is a `.smw` with CRLF line endings;
   - its revision matches the last read, re-checked just before writing;
-  - SIMPL has no unsaved changes to it;
+  - if SIMPL has it open, the user has confirmed they saved there;
   - for ops that add symbols or folders, it was saved by SIMPL 4.3x;
   - the result passes the structural checks.
 
@@ -133,10 +133,12 @@ The gate for everything else: can we change a `.smw` file without SIMPL noticing
   - `undo_last_edit`, only while the file is exactly as the edit left it;
   - `restore_version`, which previews what would be lost and needs confirmation.
   - **Proof:** the pin-key placement is proven against every wired pin SIMPL 4.3x saved in the corpus.
-- **Live link to SIMPL Windows:** SIMPL runs as administrator, so SIMPL Agent can't press Save or Reload in it.
-  - `simpl_agent_status` reads SIMPL's window title.
+- **Live link to SIMPL Windows:** SIMPL runs as administrator, so SIMPL Agent can't press Save or Reload in it, and SIMPL shows no readable unsaved-changes marker. Instead:
+  - `simpl_agent_status` sees which program SIMPL has open;
+  - if it's the one being edited, the user saves first (`user_confirmed_saved`);
+  - after the write, SIMPL itself offers to reload, and the user clicks Yes;
   - `wait_for_simpl_save` watches the file.
-  - After an edit, the user reopens the program in SIMPL without saving.
+  - **Live test:** SIMPL reloaded and compiled exactly as predicted, and its re-save was byte-for-byte what SIMPL Agent wrote.
 - **Not yet:** `redo_after_save`, for replaying an edit that SIMPL's save overwrote.
 - **Acceptance tests:**
   - "Add a second display in Room A that turns on and off with the primary display."

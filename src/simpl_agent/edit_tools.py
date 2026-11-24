@@ -4,7 +4,9 @@ Mixed into server.Tools. The write gate, in order:
 
 1. .smw only, a SIMPL Windows program, CRLF line endings.
 2. The caller's ``revision`` must match the file (re-checked just before writing).
-3. SIMPL must not have this file open with unsaved changes.
+3. If SIMPL has the file open, the user must have saved there (user_confirmed_saved=true).
+   SIMPL shows no readable unsaved-changes marker, and accepting SIMPL's reload prompt
+   after the write would discard unsaved work, so Claude has to ask.
 4. Ops that create records need a file saved by SIMPL 4.3x (shapes proven only there).
 5. All ops apply in memory first; any failure leaves the file untouched.
 6. The result must not add a structural problem (checks.py).
@@ -70,7 +72,7 @@ class EditTools:
                 continue
         return out
 
-    def _gate(self, path: str, revision: str) -> tuple[Path, bytes, Any]:
+    def _gate(self, path: str, revision: str, user_confirmed_saved: bool = False) -> tuple[Path, bytes, Any]:
         from .server import ToolError
 
         p, data, prog = self._read_program(path)
@@ -82,10 +84,11 @@ class EditTools:
         if not revision or sha256(data) != revision:
             raise ToolError("the file has changed since you read it (revision mismatch). Read it again "
                             "(describe_program) and use the new revision; SIMPL may have renumbered symbols.")
-        for w in self._open_in_simpl(p):
-            if w["unsaved_changes"]:
-                raise ToolError("SIMPL has unsaved changes to this file. Ask the user to save in SIMPL "
-                                "(Ctrl+S), then read the file again.")
+        if self._open_in_simpl(p) and not user_confirmed_saved:
+            raise ToolError("SIMPL has this program open. Ask the user to save it in SIMPL (Ctrl+S) and "
+                            "confirm; then read it again and call with user_confirmed_saved=true. (SIMPL Agent "
+                            "can't see unsaved changes in SIMPL, and SIMPL's reload after the edit would "
+                            "discard them.)")
         if p.exists() and not (p.stat().st_mode & 0o200):
             raise ToolError(f"{p.name} is read-only")
         return p, data, prog
@@ -143,20 +146,20 @@ class EditTools:
 
     def _after_write_note(self, p: Path) -> str:
         if self._open_in_simpl(p):
-            return ("SIMPL has this file open with the OLD version. Tell the user: in SIMPL, close the "
-                    "program WITHOUT saving and reopen it (or click Yes if SIMPL offers to reload). "
-                    "Saving in SIMPL before reopening would overwrite this edit. Then compile (F12).")
+            return ("Tell the user: switch to SIMPL; it will say the file changed and offer to reload. "
+                    "Click Yes, then compile (F12). Saving in SIMPL without reloading would overwrite "
+                    "this edit.")
         return "Tell the user to open the program in SIMPL and compile (F12)."
 
     # ------------------------------------------------------------ tools
     def apply_edits(self, path: str, revision: str, summary: str, edits: list[dict[str, Any]],
-                    dry_run: bool = False) -> dict[str, Any]:
+                    dry_run: bool = False, user_confirmed_saved: bool = False) -> dict[str, Any]:
         from .server import ToolError
 
         if not isinstance(summary, str) or not summary.strip() or "\n" in summary or len(summary) > SUMMARY_MAX:
             raise ToolError(f"give a one-line summary (up to {SUMMARY_MAX} characters) for the history")
         edits = self._check_ops(edits)
-        p, data, prog = self._gate(path, revision)
+        p, data, prog = self._gate(path, revision, user_confirmed_saved or dry_run)
         sig = prog.signature
         rel = (sig.get("RelVrs") or "") if sig is not None else ""
         if any(e["op"] in CREATING_OPS for e in edits) and not rel.startswith("4.3"):
@@ -209,10 +212,10 @@ class EditTools:
             "changed_outside_simpl_agent": bool(last and last.get("revision_after") != current),
         }
 
-    def undo_last_edit(self, path: str, revision: str) -> dict[str, Any]:
+    def undo_last_edit(self, path: str, revision: str, user_confirmed_saved: bool = False) -> dict[str, Any]:
         from .server import ToolError
 
-        p, data, _ = self._gate(path, revision)
+        p, data, _ = self._gate(path, revision, user_confirmed_saved)
         hist = History(p)
         target = hist.undo_target()
         if target is None:
@@ -229,11 +232,11 @@ class EditTools:
                 "revision": sha256(old), "history_id": entry["id"], "next_step": self._after_write_note(p)}
 
     def restore_version(self, path: str, revision: str, before_entry: int | str,
-                        confirm: bool = False) -> dict[str, Any]:
+                        confirm: bool = False, user_confirmed_saved: bool = False) -> dict[str, Any]:
         """Put the file back as it was before history entry ``before_entry`` ('start' = before the first)."""
         from .server import ToolError
 
-        p, data, _ = self._gate(path, revision)
+        p, data, _ = self._gate(path, revision, user_confirmed_saved or not confirm)
         hist = History(p)
         entries = hist.entries()
         if not entries:
@@ -273,6 +276,5 @@ class EditTools:
         open_in = self._open_in_simpl(p)
         return {"path": str(p), "saved": current != revision, "revision": current,
                 "open_in_simpl": bool(open_in),
-                "unsaved_changes_in_simpl": any(w["unsaved_changes"] for w in open_in) if open_in else None,
                 "next_step": "Read the program again before editing: SIMPL may have renumbered symbols."
                 if current != revision else "Not saved yet; call again to keep waiting."}

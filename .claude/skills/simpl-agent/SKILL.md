@@ -17,25 +17,26 @@ Tools for Crestron SIMPL Windows. They read, check and **edit** programs. Every 
 - **When unsure, stop and ask.** Do that rather than guess. Stop after two failed tries at the same step.
 
 ## How to handle a request
-1. **Find the program.** Call `simpl_agent_status`; it shows what SIMPL Windows has open, and whether it has unsaved changes. If that isn't the file the user means, ask for the full path.
+1. **Find the program.** Call `simpl_agent_status`; it shows which program SIMPL Windows has open. It can't see unsaved changes in SIMPL. If that isn't the file the user means, ask for the full path.
 2. **Look before changing anything.**
    - `describe_program` and `folder_tree` for the overview.
    - Then `list_folder`, `show_symbol`, `find_signals` and `follow_signal` for the part the request touches.
    - Match the program's naming style and folder layout.
 3. **Look up symbols** with `find_library_symbols` and `library_symbol_details`: real pin names and pin order. Names ending in `#` repeat (`i1`, `i2`…).
 4. **Plan in one line** and tell the user, e.g. "Add an OR in Room A that turns on room_a_any when either source is on."
-5. **Make ONE `apply_edits` call** with every operation the request needs, a one-line `summary`, and the `revision` from your last read. The call is all or nothing. Use `dry_run: true` first when unsure.
+5. **If SIMPL has the program open, ask the user to save it there first** (Ctrl+S) and wait for their OK. After the edit, SIMPL offers to reload, and reloading discards anything unsaved. Then read the program again, and pass `user_confirmed_saved: true`.
+6. **Make ONE `apply_edits` call** with every operation the request needs, a one-line `summary`, and the `revision` from your last read. The call is all or nothing. Use `dry_run: true` first when unsure.
    - **New signals:** they're created automatically when you name them in `inputs`, `outputs` or `connect`. Set `new_signal_type` to `analog` or `serial` when they aren't digital.
    - **Wire every pin.** Use the built-in signals `0` or `1` for constant inputs.
    - **Second drivers:** a digital signal can't get a second driver, except between Buffer-type symbols. Analog and serial signals may have several.
    - **Which symbols:** only simple logic symbols proven in SIMPL 4.3x files can be added (`add_symbol_supported`), and only to files saved by SIMPL 4.3x.
-6. **Read the result:** `changes`, `new_problems` (SIMPL-style warnings the edit introduced), and `next_step`. If a new problem is unintended, fix it with another `apply_edits`, or `undo_last_edit`.
-7. **Tell the user** what changed, using SIMPL's names: S-number, folder and symbol, e.g. "S-2.3 (Logic\Room A: OR)". Pass on `next_step`, which is usually:
-   - in SIMPL, close the program **without saving** and reopen it;
+7. **Read the result:** `changes`, `new_problems` (SIMPL-style warnings the edit introduced), and `next_step`. If a new problem is unintended, fix it with another `apply_edits`, or `undo_last_edit`.
+8. **Tell the user** what changed, using SIMPL's names: S-number, folder and symbol, e.g. "S-2.3 (Logic\Room A: OR)". Pass on `next_step`, which is usually:
+   - switch to SIMPL, which says the file changed and offers to reload: click **Yes**;
    - then compile with **F12**.
 
-   Saving in SIMPL before reopening would overwrite the edit.
-8. **After the user saves in SIMPL,** read the program again before the next edit. SIMPL can renumber symbols, so a stale `revision` is refused. `wait_for_simpl_save` waits for that save.
+   Saving in SIMPL without reloading would overwrite the edit.
+9. **After the user saves in SIMPL,** read the program again before the next edit. SIMPL can renumber symbols, so a stale `revision` is refused. `wait_for_simpl_save` waits for that save.
 
 ## History
 - **`edit_history`:** what SIMPL Agent changed, and whether the file was changed elsewhere since.

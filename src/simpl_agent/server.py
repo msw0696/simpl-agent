@@ -53,7 +53,8 @@ Edit only through apply_edits; never edit .smw files by hand or with other tools
 - Symbols are '#<handle>'. Every result has a 'revision'; SIMPL can renumber handles when it
   saves, so re-read after the user saves and never reuse old handles.
 - Edits: plan in one line, then ONE apply_edits call with a summary and the revision you read.
-  Do only what was asked. Afterwards follow its next_step (reload in SIMPL, then F12).
+  If SIMPL has the file open, ask the user to save there first (user_confirmed_saved=true).
+  Do only what was asked. Afterwards follow its next_step (Yes to SIMPL's reload, then F12).
   undo_last_edit / restore_version / edit_history manage history.
 - find_library_symbols / library_symbol_details give real pin names. Never invent symbols,
   pins or devices.
@@ -92,12 +93,14 @@ def simpl_windows() -> list[str]:
 
 
 def parse_simpl_title(title: str) -> dict[str, Any]:
-    """'SIMPL Windows - x.smw ( C:\\path\\x.smw)' -> open file and unsaved-changes flag."""
-    out: dict[str, Any] = {"title": title, "file": None, "unsaved_changes": None}
+    """'SIMPL Windows - x.smw ( C:\\path\\x.smw)' -> the open file.
+
+    SIMPL 4.32 shows no unsaved-changes marker anywhere readable (title, child windows, files),
+    checked live on 2026-11-24, so SIMPL Agent can't tell whether SIMPL has unsaved work."""
+    out: dict[str, Any] = {"title": title, "file": None}
     if " - " in title:
         rest = title.split(" - ", 1)[1]
         name, _, path = rest.partition("(")
-        out["unsaved_changes"] = name.strip().endswith("*")
         path = path.strip().rstrip(")").strip()
         out["file"] = path or None
     return out
@@ -252,7 +255,6 @@ class Tools(EditTools):
             "logic_top_level": top[:max_folders],
             "logic_top_level_total": len(top),
             "open_in_simpl": bool(open_in),
-            "unsaved_changes_in_simpl": any(w["unsaved_changes"] for w in open_in) if open_in else None,
         }
 
     def _symbol_row(self, ix: LibraryIndex, s) -> dict[str, Any]:
@@ -542,7 +544,7 @@ def create_server(tools: Tools | None = None) -> Any:
     @server.tool(
         name="simpl_agent_status",
         description="Call first. SIMPL Agent's version and milestone, whether SIMPL's symbol library "
-        "was found, and which program SIMPL Windows has open (with an unsaved-changes flag). Read-only.",
+        "was found, and which program SIMPL Windows has open. It can't see unsaved changes in SIMPL. Read-only.",
     )
     async def simpl_agent_status() -> dict[str, Any]:
         return await _run("simpl_agent_status")
@@ -614,8 +616,9 @@ def create_server(tools: Tools | None = None) -> Any:
 
     @server.tool(name="apply_edits", description="Change a program: ONE call with every operation the "
                  "request needs, applied together (all or nothing). Needs the 'revision' from your last "
-                 "read and a one-line summary for the history. Refused if SIMPL has unsaved changes to the "
-                 "file. Operations (op + fields): add_symbol {symbol (library code or exact name), folder, "
+                 "read and a one-line summary for the history. If SIMPL has the file open, first ask the user to "
+                 "save in SIMPL (Ctrl+S) and pass user_confirmed_saved=true once they have. "
+                 "Operations (op + fields): add_symbol {symbol (library code or exact name), folder, "
                  "inputs [signal names, in pin order], outputs [...], parameters?, comment?, "
                  "new_signal_type?}; add_folder {name, parent?}; connect {symbol '#h', pin 'I2'/'O1', "
                  "signal (omit to disconnect), new_signal_type?}; set_parameter {symbol, pin 'P1', value}; "
@@ -623,9 +626,9 @@ def create_server(tools: Tools | None = None) -> Any:
                  "new_name}; remove_symbol {symbol}; move_symbol {symbol, folder}. New signal names are "
                  "created. Returns changes, new problems and next_step. dry_run=true checks without writing.")
     async def apply_edits(path: str, revision: str, summary: str, edits: list[dict[str, Any]],
-                          dry_run: bool = False) -> dict[str, Any]:
+                          dry_run: bool = False, user_confirmed_saved: bool = False) -> dict[str, Any]:
         return await _run("apply_edits", path=path, revision=revision, summary=summary, edits=edits,
-                          dry_run=dry_run)
+                          dry_run=dry_run, user_confirmed_saved=user_confirmed_saved)
 
     @server.tool(name="edit_history", description="SIMPL Agent's change history for a program (newest "
                  "last), and whether the file changed outside SIMPL Agent since the last change.")
@@ -634,16 +637,17 @@ def create_server(tools: Tools | None = None) -> Any:
 
     @server.tool(name="undo_last_edit", description="Undo SIMPL Agent's most recent change. Only works "
                  "while the file is exactly as that change left it (needs the current revision).")
-    async def undo_last_edit(path: str, revision: str) -> dict[str, Any]:
-        return await _run("undo_last_edit", path=path, revision=revision)
+    async def undo_last_edit(path: str, revision: str, user_confirmed_saved: bool = False) -> dict[str, Any]:
+        return await _run("undo_last_edit", path=path, revision=revision,
+                          user_confirmed_saved=user_confirmed_saved)
 
     @server.tool(name="restore_version", description="Put a program back as it was before history entry "
                  "before_entry (an id from edit_history, or 'start'). Without confirm=true it only shows "
                  "what would be lost; show the user and ask before confirming.")
-    async def restore_version(path: str, revision: str, before_entry: str,
-                              confirm: bool = False) -> dict[str, Any]:
+    async def restore_version(path: str, revision: str, before_entry: str, confirm: bool = False,
+                              user_confirmed_saved: bool = False) -> dict[str, Any]:
         return await _run("restore_version", path=path, revision=revision, before_entry=before_entry,
-                          confirm=confirm)
+                          confirm=confirm, user_confirmed_saved=user_confirmed_saved)
 
     @server.tool(name="wait_for_simpl_save", description="Wait (up to timeout_s, max 120) for the user to "
                  "save the program in SIMPL, i.e. for the file to differ from 'revision'. Call again to "

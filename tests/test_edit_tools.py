@@ -77,8 +77,11 @@ def test_gate_refusals(setup, tmp_path: Path) -> None:
     ok = {"op": "set_comment", "symbol": "#5", "text": "hi"}
     assert "revision mismatch" in call(t, "apply_edits", path=str(p), revision="x" * 64, summary="s", edits=[ok])["error"]
     assert "one-line summary" in call(t, "apply_edits", path=str(p), revision=rev(p), summary="", edits=[ok])["error"]
-    t.windows = lambda: [f"SIMPL Windows - room.smw* ( {p})"]
-    assert "unsaved changes" in call(t, "apply_edits", path=str(p), revision=rev(p), summary="s", edits=[ok])["error"]
+    # Open in SIMPL: refused until the user has saved there and Claude says so.
+    t.windows = lambda: [f"SIMPL Windows - room.smw ( {p})"]
+    assert "Ask the user to save it in SIMPL" in call(
+        t, "apply_edits", path=str(p), revision=rev(p), summary="s", edits=[ok])["error"]
+    assert call(t, "apply_edits", path=str(p), revision=rev(p), summary="s", edits=[ok], dry_run=True)["ok"]
     t.windows = lambda: []
     lf = tmp_path / "job" / "lf.smw"
     lf.write_bytes(p.read_bytes().replace(b"\r\n", b"\n"))
@@ -103,9 +106,9 @@ def test_dry_run_writes_nothing(setup) -> None:
 def test_open_in_simpl_note(setup) -> None:
     t, p = setup
     t.windows = lambda: [f"SIMPL Windows - room.smw ( {p})"]
-    r = call(t, "apply_edits", path=str(p), revision=rev(p), summary="s",
+    r = call(t, "apply_edits", path=str(p), revision=rev(p), summary="s", user_confirmed_saved=True,
              edits=[{"op": "set_comment", "symbol": "#5", "text": "hi"}])
-    assert r["ok"] and "WITHOUT saving" in r["next_step"]
+    assert r["ok"] and "offer to reload" in r["next_step"]
 
 
 def test_undo_twice_back_to_start(setup) -> None:
