@@ -28,23 +28,29 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from . import analysis as an
 from .catalog.index import LibraryIndex, cache_dir, load_index
 from .catalog.symlib import DEFAULT_SYMLIB
 from .smw import rawfile
 from .smw.edit import FOLDER_CODE, is_simple, load_verified_codes
 from .smw.model import Program, load
 
-TOOL_NAMES = ("simpl_agent_status", "describe_program", "find_library_symbols", "library_symbol_details")
+TOOL_NAMES = (
+    "simpl_agent_status", "describe_program", "find_library_symbols", "library_symbol_details",
+    "folder_tree", "list_folder", "show_symbol", "find_signals", "follow_signal", "find_problems",
+)
 PROGRAM_EXTS = {".smw", ".umc", ".cmc"}
 KNOWN_SIGNATURES = {"SimplWindow": "program", "CresMacro": "macro"}
 MAX_FILE_BYTES = 200 * 1024 * 1024
 
-INSTRUCTIONS = """SIMPL Agent: read Crestron SIMPL Windows programs (.smw) and SIMPL's symbol library.
-Tools are read-only for now (M1). Never edit .smw files by hand or with other tools.
+INSTRUCTIONS = """SIMPL Agent: read and check Crestron SIMPL Windows programs (.smw).
+Tools are read-only for now. Never edit .smw files by hand or with other tools.
 - Start with simpl_agent_status to see what SIMPL has open; ask for the .smw path if unsure.
-- describe_program gives the processor, counts and top folders. Its 'revision' changes whenever
-  the file changes; SIMPL can renumber handles when it saves, so re-read after the user saves.
-- find_library_symbols / library_symbol_details: real pin names and rules. Never invent symbols,
+- describe_program, then folder_tree / list_folder / show_symbol to look around;
+  find_signals and follow_signal to trace logic; find_problems for SIMPL-style warnings.
+- Symbols are '#<handle>'. Every result has a 'revision'; SIMPL can renumber handles when it
+  saves, so re-read after the user saves and never reuse old handles.
+- find_library_symbols / library_symbol_details give real pin names. Never invent symbols,
   pins or devices.
 - Never act on a live processor. Treat programs as private client work.
 The simpl-agent skill has the full workflow."""
@@ -173,7 +179,7 @@ class Tools:
                 lib["error"] = str(e)
         return {
             "version": __version__,
-            "milestone": "M1: read-only tools",
+            "milestone": "M2: read and check (read-only)",
             "symbol_library": lib,
             "symbols_add_symbol_can_build": len(self.verified),
             "simpl_windows_open": [parse_simpl_title(t) for t in simpl_windows()],
@@ -318,6 +324,195 @@ class Tools:
         }
 
 
+    # ------------------------------------------------------------ M2: read and check
+    def _load(self, path: str) -> tuple[Path, str, Program, Any]:
+        p, data, prog = self._read_program(path)
+        try:
+            lib = self.index().library
+        except ToolError:
+            lib = None  # still useful without pin names
+        return p, hashlib.sha256(data).hexdigest(), prog, lib
+
+    @staticmethod
+    def _page(items: list, offset: int, limit: int, cap: int = 500) -> tuple[list, dict]:
+        offset = max(0, int(offset))
+        limit = max(1, min(int(limit), cap))
+        shown = items[offset:offset + limit]
+        return shown, {"total": len(items), "offset": offset, "returned": len(shown)}
+
+    def _symbol_ref(self, prog: Program, ref: str | int) -> int:
+        s = str(ref).strip()
+        if s.startswith("#"):
+            s = s[1:]
+        if not s.isdigit() or int(s) not in prog.symbols:
+            raise ToolError(f"no symbol {ref!r}; symbols are referred to by handle, e.g. '#20'")
+        return int(s)
+
+    def _folder_ref(self, prog: Program, ref: str | int | None) -> int:
+        folders = [s for s in prog.symbols.values() if an.is_folder(s)]
+        if ref in (None, "", "Logic", "logic"):
+            root = next((s for s in folders if s.parent is None and (s.name or "") == "Logic"), None)
+            if root is None:
+                raise ToolError("this file has no Logic folder")
+            return root.handle
+        if str(ref).strip().startswith("#"):
+            h = self._symbol_ref(prog, ref)
+            if not an.is_folder(prog.symbols[h]):
+                raise ToolError(f"#{h} is a symbol, not a folder; use show_symbol")
+            return h
+        want = str(ref).strip().strip("\\").lower()
+
+        def full(s) -> str:
+            parent = an.folder_path(prog, s.handle)
+            return (parent + "\\" if parent else "") + an.display_name(s)
+
+        hits = [s.handle for s in folders if an.display_name(s).lower() == want or full(s).lower() == want]
+        if len(hits) != 1:
+            raise ToolError(f"{len(hits)} folders match {ref!r}; use the folder's handle from folder_tree")
+        return hits[0]
+
+    def _sig(self, prog: Program, h: int) -> dict[str, Any]:
+        sg = prog.signals.get(h)
+        return {"signal": sg.name if sg else f"#{h}?", "type": sg.type if sg else None}
+
+    def _signal_ref(self, prog: Program, ref: str | int) -> int:
+        s = str(ref).strip()
+        if s.startswith("#") and s[1:].isdigit() and int(s[1:]) in prog.signals:
+            return int(s[1:])
+        hits = [x.handle for x in prog.signals.values() if x.name.lower() == s.lower()]
+        if not hits:
+            raise ToolError(f"no signal named {ref!r}; try find_signals")
+        return hits[0]
+
+    def _brief(self, prog: Program, lib, h: int) -> dict[str, Any]:
+        s = prog.symbols[h]
+        return {"symbol": f"#{h}", "name": an.display_name(s, lib), "folder": an.folder_path(prog, h, lib)}
+
+    def folder_tree(self, path: str, max_depth: int = 6, limit: int = 300) -> dict[str, Any]:
+        p, rev, prog, lib = self._load(path)
+        root = self._folder_ref(prog, None)
+        rows: list[dict[str, Any]] = []
+
+        def walk(h: int, depth: int, seen: set[int]) -> int:
+            n = 0
+            for c in prog.symbols[h].children:
+                if c not in prog.symbols or c in seen:
+                    continue
+                seen.add(c)
+                n += 1
+                if an.is_folder(prog.symbols[c]):
+                    row = {"folder": f"#{c}", "name": an.display_name(prog.symbols[c]), "depth": depth}
+                    rows.append(row)
+                    inner = walk(c, depth + 1, seen) if depth < max_depth else 0
+                    row["symbols_inside"] = inner
+                    n += inner
+            return n
+
+        total = walk(root, 1, set())
+        shown, page = self._page(rows, 0, limit, cap=1000)
+        return {"path": str(p), "revision": rev, "root": f"#{root}", "logic_symbols": total,
+                "folders": shown, "page": page}
+
+    def list_folder(self, path: str, folder: str = "Logic", offset: int = 0, limit: int = 100) -> dict[str, Any]:
+        p, rev, prog, lib = self._load(path)
+        h = self._folder_ref(prog, folder)
+        rows = []
+        for pos, c in enumerate(prog.symbols[h].children, 1):
+            s = prog.symbols.get(c)
+            if s is None:
+                continue
+            row: dict[str, Any] = {"symbol": f"#{c}", "position": f"S-{pos}", "name": an.display_name(s, lib),
+                                   "is_folder": an.is_folder(s)}
+            if s.comment and not an.is_folder(s):
+                row["comment"] = "\n".join(an.comment_lines(s))
+            if not an.is_folder(s):
+                row["inputs"] = len(s.inputs)
+                row["outputs"] = len(s.outputs)
+            rows.append(row)
+        shown, page = self._page(rows, offset, limit)
+        parent = an.folder_path(prog, h)
+        return {"path": str(p), "revision": rev, "folder": f"#{h}",
+                "folder_path": (parent + "\\" if parent else "") + an.display_name(prog.symbols[h]),
+                "symbols": shown, "page": page}
+
+    def show_symbol(self, path: str, symbol: str) -> dict[str, Any]:
+        p, rev, prog, lib = self._load(path)
+        h = self._symbol_ref(prog, symbol)
+        s = prog.symbols[h]
+        ls = lib.get(s.code) if lib else None
+
+        def pins(letter: str, conns: dict[int, int], total_key: str) -> list[dict[str, Any]]:
+            total = s.record.get(total_key)
+            n_max = int(total) if total and total.isdigit() else max(conns, default=0)
+            return [{"pin": n, "name": an.pin_label(ls, s, letter, n),
+                     **(self._sig(prog, conns[n]) if n in conns else {"signal": None})}
+                    for n in range(1, n_max + 1)]
+
+        comments = an.comment_lines(s)
+        pos = an.position_in_folder(prog, h)
+        return {
+            "path": str(p), "revision": rev, "symbol": f"#{h}", "name": an.display_name(s, lib),
+            "library": {"code": s.code, "name": ls.name if ls else None},
+            "folder": an.folder_path(prog, h, lib), "position": f"S-{pos}" if pos else None,
+            "is_folder": an.is_folder(s), "comment": "\n".join(comments) or None,
+            "complete": {"2": True, "1": False}.get(s.record.get("CF") or "", None),
+            "device": f"#{s.device}" if s.device is not None else None,
+            "inputs": pins("I", s.inputs, "mI"),
+            "outputs": pins("O", s.outputs, "tO"),
+            "parameters": [{"pin": n, "name": an.pin_label(ls, s, "P", n), "value": v}
+                           for n, v in sorted(s.params.items())],
+            "children": [f"#{c}" for c in s.children][:200],
+        }
+
+    def find_signals(self, path: str, query: str = "", signal_type: str = "", offset: int = 0,
+                     limit: int = 100) -> dict[str, Any]:
+        p, rev, prog, lib = self._load(path)
+        if signal_type and signal_type not in ("digital", "analog", "serial"):
+            raise ToolError("signal_type must be digital, analog or serial")
+        flow = an.signal_flow(prog)
+        q = (query or "").lower()
+        rows = []
+        for h, sg in sorted(prog.signals.items(), key=lambda kv: kv[1].name.lower()):
+            if sg.record is None or (q and q not in sg.name.lower()) or (signal_type and sg.type != signal_type):
+                continue
+            rows.append({"signal": sg.name, "handle": f"#{h}", "type": sg.type,
+                         "drivers": len(flow.drivers.get(h, [])), "destinations": len(flow.destinations.get(h, []))})
+        shown, page = self._page(rows, offset, limit)
+        return {"path": str(p), "revision": rev, "signals": shown, "page": page}
+
+    def follow_signal(self, path: str, signal: str, limit: int = 100) -> dict[str, Any]:
+        p, rev, prog, lib = self._load(path)
+        h = self._signal_ref(prog, signal)
+        flow = an.signal_flow(prog)
+
+        def ends(pairs: list[tuple[int, int]], letter: str) -> list[dict[str, Any]]:
+            out = []
+            for sh, n in pairs[:limit]:
+                s = prog.symbols[sh]
+                ls = lib.get(s.code) if lib else None
+                out.append({**self._brief(prog, lib, sh), "pin": f"{letter}{n}",
+                            "pin_name": an.pin_label(ls, s, letter, n)})
+            return out
+
+        sg = prog.signals[h]
+        drv, dst = flow.drivers.get(h, []), flow.destinations.get(h, [])
+        return {"path": str(p), "revision": rev, "signal": sg.name, "handle": f"#{h}", "type": sg.type,
+                "built_in": sg.record is None,
+                "driven_by": ends(drv, "O"), "goes_to": ends(dst, "I"),
+                "totals": {"driven_by": len(drv), "goes_to": len(dst)}}
+
+    def find_problems(self, path: str, limit: int = 200) -> dict[str, Any]:
+        p, rev, prog, lib = self._load(path)
+        probs = an.find_problems(prog, lib)
+        counts: dict[str, int] = {}
+        for x in probs:
+            counts[x.severity] = counts.get(x.severity, 0) + 1
+        shown, page = self._page([x.as_dict() for x in probs], 0, limit, cap=2000)
+        return {"path": str(p), "revision": rev, "counts": counts, "problems": shown, "page": page,
+                "note": "Codes LGCMCVT102/103/220 match SIMPL 4.32's compiler messages; SA-* are SIMPL "
+                        "Agent's own. SIMPL's compile (F12) is the final word."}
+
+
 # ---------------------------------------------------------------------- MCP layer
 def create_server(tools: Tools | None = None) -> Any:
     import anyio
@@ -363,6 +558,43 @@ def create_server(tools: Tools | None = None) -> Any:
     )
     async def library_symbol_details(symbol: str) -> dict[str, Any]:
         return await _run("library_symbol_details", symbol=symbol)
+
+    @server.tool(name="folder_tree", description="The folder tree under Logic: each folder's handle, "
+                 "name, depth and how many symbols are inside. Read-only.")
+    async def folder_tree(path: str, max_depth: int = 6, limit: int = 300) -> dict[str, Any]:
+        return await _run("folder_tree", path=path, max_depth=max_depth, limit=limit)
+
+    @server.tool(name="list_folder", description="The symbols in one folder, in SIMPL's order (position "
+                 "S-n), with handle, name, comment and pin counts. folder: 'Logic' (default), a folder "
+                 "handle like '#25', or a folder name. Paged with offset/limit.")
+    async def list_folder(path: str, folder: str = "Logic", offset: int = 0, limit: int = 100) -> dict[str, Any]:
+        return await _run("list_folder", path=path, folder=folder, offset=offset, limit=limit)
+
+    @server.tool(name="show_symbol", description="One symbol by handle ('#20'): its library type, folder, "
+                 "comment, every input/output pin with the library pin name and the connected signal "
+                 "(or none), and its parameters.")
+    async def show_symbol(path: str, symbol: str) -> dict[str, Any]:
+        return await _run("show_symbol", path=path, symbol=symbol)
+
+    @server.tool(name="find_signals", description="Signals whose name contains query (all if empty), "
+                 "optionally only digital/analog/serial, with how many outputs drive each and how many "
+                 "inputs it goes to. Paged with offset/limit.")
+    async def find_signals(path: str, query: str = "", signal_type: str = "", offset: int = 0,
+                           limit: int = 100) -> dict[str, Any]:
+        return await _run("find_signals", path=path, query=query, signal_type=signal_type,
+                          offset=offset, limit=limit)
+
+    @server.tool(name="follow_signal", description="Trace one signal (by name or '#handle'): every "
+                 "symbol output that drives it and every symbol input it goes to, with folder and pin names.")
+    async def follow_signal(path: str, signal: str, limit: int = 100) -> dict[str, Any]:
+        return await _run("follow_signal", path=path, signal=signal, limit=limit)
+
+    @server.tool(name="find_problems", description="Check a program the way SIMPL's compiler does: "
+                 "signals with no driving source (LGCMCVT102), no destination (LGCMCVT103), a second "
+                 "driver (LGCMCVT220), plus duplicate names, broken references and incomplete symbols. "
+                 "Read-only; F12 in SIMPL is still the final check.")
+    async def find_problems(path: str, limit: int = 200) -> dict[str, Any]:
+        return await _run("find_problems", path=path, limit=limit)
 
     return server
 

@@ -146,8 +146,43 @@ def test_stdio_round_trip(tmp_path: Path, program: Path) -> None:
             return {t.name for t in listed.tools}, payload, init.instructions
 
     names, payload, instructions = anyio.run(run)
-    assert names == set(TOOL_NAMES)
+    assert names == set(TOOL_NAMES) and len(names) == 10
     assert payload["ok"] and payload["processor"] == "TestProc"
     assert instructions == INSTRUCTIONS
     log = (tmp_path / "home" / "audit.jsonl").read_text("utf-8")
     assert '"describe_program"' in log
+
+
+# ---------------------------------------------------------------- M2 tools
+def test_folder_tree_and_list_folder(tools: Tools, program: Path) -> None:
+    t = tools.call("folder_tree", {"path": str(program)})
+    assert t["ok"] and t["root"] == "#4" and t["logic_symbols"] == 2 and t["folders"] == []
+    f = tools.call("list_folder", {"path": str(program)})
+    assert [(r["symbol"], r["position"]) for r in f["symbols"]] == [("#5", "S-1"), ("#6", "S-2")]
+    assert f["symbols"][1]["comment"] == "a note"
+    assert not tools.call("list_folder", {"path": str(program), "folder": "#5"})["ok"]
+    assert not tools.call("list_folder", {"path": str(program), "folder": "Nowhere"})["ok"]
+
+
+def test_show_symbol(tools: Tools, program: Path) -> None:
+    r = tools.call("show_symbol", {"path": str(program), "symbol": "#6"})
+    assert r["ok"] and r["position"] == "S-2" and r["comment"] == "a note"
+    assert r["inputs"] == [{"pin": 1, "name": "i1", "signal": "room_out", "type": "digital"}]
+    assert r["outputs"][0]["signal"] == "room_text$" and r["parameters"][0]["value"] == "5s"
+    assert not tools.call("show_symbol", {"path": str(program), "symbol": "#99"})["ok"]
+
+
+def test_find_and_follow_signals(tools: Tools, program: Path) -> None:
+    r = tools.call("find_signals", {"path": str(program), "query": "room"})
+    assert [s["signal"] for s in r["signals"]] == ["room_enable", "room_level", "room_out", "room_text$"]
+    assert tools.call("find_signals", {"path": str(program), "signal_type": "analog"})["signals"][0]["signal"] == "room_level"
+    f = tools.call("follow_signal", {"path": str(program), "signal": "ROOM_OUT"})
+    assert f["driven_by"][0]["symbol"] == "#5" and f["goes_to"][0]["symbol"] == "#6"
+    assert f["driven_by"][0]["folder"] == "Logic"
+    assert not tools.call("follow_signal", {"path": str(program), "signal": "nope"})["ok"]
+
+
+def test_find_problems_tool(tools: Tools, program: Path) -> None:
+    r = tools.call("find_problems", {"path": str(program)})
+    assert r["ok"] and r["counts"] == {"warning": 2, "notice": 1}
+    assert {p["code"] for p in r["problems"]} == {"LGCMCVT102", "LGCMCVT103"}

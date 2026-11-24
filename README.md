@@ -8,7 +8,12 @@ Needs Windows with SIMPL Windows installed (it reads SIMPL's own symbol library)
 
 ## Status
 
-**M1 (MCP server), 2026-11-24:** `python -m simpl_agent.server` runs a stdio MCP server with four read-only tools: `simpl_agent_status`, `describe_program`, `find_library_symbols` and `library_symbol_details`.
+**M2 (read and check), 2026-11-24:** `python -m simpl_agent.server` runs a stdio MCP server with ten read-only tools:
+- status and overview: `simpl_agent_status`, `describe_program`;
+- navigating: `folder_tree`, `list_folder`, `show_symbol`;
+- tracing: `find_signals`, `follow_signal`;
+- checking: `find_problems`, which uses SIMPL 4.32's own codes LGCMCVT102/103/220 and matches SIMPL's compiler on every file compiled so far;
+- the library: `find_library_symbols`, `library_symbol_details`.
 - Every call is logged to `%LOCALAPPDATA%\SimplAgentudit.jsonl`.
 - The library index is cached in the same folder.
 - The skill is `.claude/skills/simpl-agent/SKILL.md`; Claude Code loads it automatically in this repo.

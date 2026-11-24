@@ -88,7 +88,10 @@ The corpus files stay where they are or in `~/simpl-corpus/` (see `tools/fetch_g
   - missing on 1,400 symbols (older saves).
   - **Evidence:** the public `smpc` project's `incomplete.smw` test file. In the corpus, `CF=1` only occurs with an empty pin.
   - **Which pins are required depends on the symbol:** 54,716 complete symbols have an empty input (Toggle, One Shot, Interlock and others). New symbols from `add_symbol` are fully wired and get `CF=2`.
-- **Comments:** a comment can span several keys (`Cmn1`, `Cmn2`, ...).
+- **Comments:** a comment can span several keys (`Cmn1`, `Cmn2`, ...). They are **one continuous text**: a two-backslash line break can be split across keys.
+  - **Line breaks:** two backslashes (`\\`), found in 21,803 of 36,513 comments.
+  - **Suffix:** 161 comments end in `||1` (meaning unknown).
+  - **Folder names:** a folder's name is the first line of its comment.
 - **Tree:** `PrH` and `C*` agree both ways (holds across 345 K links). `C*` runs 1..`mC` with no gaps (holds).
 - **Devices:** a symbol's `DvH` resolves to a device, and that device's `SmH` points back to the symbol (holds).
 - **Key order:** one consistent order exists. Across every `Sm` and `Sg` record, no pair of keys ever appears in both orders. `Sg` is `ObjTp H Nm [SgTp] [SgTf] [Fx]`.
