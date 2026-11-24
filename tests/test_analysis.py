@@ -46,7 +46,7 @@ def test_second_driver_warns_unless_shared(tiny: bytes) -> None:
     ed = Editor(rawfile.parse(tiny), lib(), verified_codes={3, 20})
     ed.add_symbol(3, "Logic", inputs=["room_enable", "room_enable"], outputs=["room_out"], allow_second_driver=True)
     probs = [p for p in an.find_problems(ed.prog, lib()) if p.code == "LGCMCVT220"]
-    assert len(probs) == 1 and probs[0].signal == "room_out" and probs[0].confirmed
+    assert len(probs) == 1 and probs[0].signal == "room_out"
     assert "S-3" in probs[0].message  # third symbol in Logic: SIMPL's number S-3
 
     ed2 = Editor(rawfile.parse(tiny), lib(), verified_codes={3, 20})
@@ -190,3 +190,29 @@ def test_matches_simpl_compiler(rel: str, expected: tuple[int, int]) -> None:
     c = Counter(p.severity for p in an.find_problems(prog, load_index().library))
     assert (c["warning"], c["notice"]) == expected
     assert c["error"] == 0
+
+
+def test_second_driver_not_reported_when_a_module_drives(tiny: bytes) -> None:
+    """SIMPL skips LGCMCVT220 when a macro or SIMPL+ module is one of the drivers."""
+    data = tiny.replace(b"H=5\r\nSmC=20\r\n", b"H=5\r\nSmC=155\r\nNm=Some Macro.umc\r\n")
+    ed = Editor(rawfile.parse(data), lib(), verified_codes={3})
+    ed.add_symbol(3, "Logic", inputs=["room_enable", "room_enable"], outputs=["room_out"], allow_second_driver=True)
+    assert "LGCMCVT220" not in counts(ed.prog)
+
+
+def _real_job() -> Path | None:
+    for c in (os.environ.get("SIMPL_REAL_JOB"),
+              Path.home() / "OneDrive" / "Documents" / "SIMPL" / "real-test" / "gpc" / "dmps3_4k_150_standard.smw"):
+        if c and Path(c).is_file():
+            return Path(c)
+    return None
+
+
+@pytest.mark.corpus
+@pytest.mark.skipif(_real_job() is None, reason="real-job test program not on this PC")
+def test_real_job_compiles_clean_like_simpl() -> None:
+    """A public DMPS3 classroom program SIMPL 4.32 compiled with no messages (2026-11-24)."""
+    from simpl_agent.catalog.index import load_index
+
+    prog = load(rawfile.read(_real_job()))
+    assert [p.message for p in an.find_problems(prog, load_index().library)] == []

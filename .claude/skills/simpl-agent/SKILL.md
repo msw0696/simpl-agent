@@ -48,10 +48,12 @@ Tools for Crestron SIMPL Windows. They read, check and **edit** programs. Every 
   - `LGCMCVT102`, warning: a signal goes into an input but nothing drives it.
   - `LGCMCVT103`, notice: a signal is driven but goes nowhere.
   - `LGCMCVT220`, warning: a digital signal has a second driving source.
-- **Unconfirmed results:** entries marked `unconfirmed` involve SIMPL+ modules or macros, which SIMPL hasn't been seen to report yet. Results on macro files haven't been checked either. Say so.
+- **Macro files:** results on macro files (`.umc`/`.cmc`) themselves haven't been checked against SIMPL yet. Say so if you check one.
 - **SIMPL Agent's own checks** start with `SA-`: duplicate names, broken references, and symbols SIMPL marked incomplete.
 - **Exemptions** (confirmed by SIMPL 4.32):
   - The built-in signals and `//` placeholder names are never reported.
   - Buffer-type symbols may share an output.
   - Analog and serial signals may have several drivers.
+  - A second driver isn't reported when a macro or SIMPL+ module is one of the drivers.
 - **Compiling:** the user's compile (F12 in SIMPL) is the final word.
+- **SIMPL+ on 3-Series:** programs with SIMPL+ need Microsoft .NET Compact Framework 3.5 to compile. Without it, SIMPL shows error LGCMCVT277 and a flood of LGCMCVT102/103 messages for every signal wired to a module. Those aren't real problems in the program.

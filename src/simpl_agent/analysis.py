@@ -10,7 +10,8 @@ compiles (docs/format.md section 7):
 Built-in signals (0, 1, Local) and placeholder names starting with ``//`` are
 exempt. Symbols the library marks as sharing outputs (Buffer, panels...) don't
 count as a second source; analog and serial signals may have several sources.
-Those two exemptions match the corpus, but SIMPL hasn't confirmed them yet.
+SIMPL also skips the second-driver check whenever a macro or SIMPL+ module is one
+of the drivers. All of these are confirmed by SIMPL 4.32 compiles (docs/format.md).
 """
 from __future__ import annotations
 
@@ -299,13 +300,16 @@ def find_problems(prog: Program, lib: SymbolLibrary | None) -> list[Problem]:
             def shares(sym_h: int) -> bool:
                 ls = lib.get(prog.symbols[sym_h].code) if lib else None
                 return bool(ls and ls.shares_outputs)
-            if not all(shares(s) for s, _ in drv):
-                module = any(prog.symbols[s].code in MODULE_CODES for s, _ in drv)
+            # SIMPL doesn't report a second driver when a macro or SIMPL+ module is one of
+            # the drivers: a real DMPS3 program with 9 such signals compiled with no
+            # LGCMCVT220 (2026-11-24, docs/format.md "Real job").
+            module = any(prog.symbols[s].code in MODULE_CODES for s, _ in drv)
+            if not module and not all(shares(s) for s, _ in drv):
                 for s, _ in drv[1:]:
                     where = simpl_number(prog, s) or f"#{s}"
                     out.append(Problem("warning", "LGCMCVT220",
                                        f'Signal "{sg.name}" on symbol {where} has a previously defined driving source.',
-                                       signal=sg.name, symbols=[x for x, _ in drv], confirmed=not module))
+                                       signal=sg.name, symbols=[x for x, _ in drv]))
 
     for s in prog.symbols.values():
         # Parents inherit CF=1 from an incomplete child; report only the symbol itself.

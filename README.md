@@ -76,7 +76,7 @@ These are built into the tools and the skill:
 |---|---|---|
 | **M0** Format proof | Lossless reader and writer; semantic model; first edits; SIMPL reload and compile check | ✅ Passed in SIMPL 4.32 |
 | **M1** Server shell | stdio MCP server, library index, audit log, skill | ✅ Built |
-| **M2** Read and check | Navigate, trace and `find_problems` | ✅ Built; some rules unconfirmed |
+| **M2** Read and check | Navigate, trace and `find_problems` | ✅ Matches SIMPL's compiler on every file compiled so far |
 | **M3** Edit and safety | `apply_edits`, history and undo, live link to the SIMPL window | ⏭ Next |
 | **M4** Devices | Add devices, find free IDs | Later, optional |
 | **M5** New programs | Start a program from scratch | Later, optional |
@@ -112,7 +112,7 @@ The gate for everything else: can we change a `.smw` file without SIMPL noticing
 - `find_problems` finds signals driven twice, never driven or never used, duplicate names, and symbols that aren't fully wired. It uses SIMPL's own message codes.
 - Macro files (`.umc`/`.cmc`) are handled: a macro's arguments count as its own inputs and outputs.
 - **Checked against SIMPL 4.32:** ten hand-compiled test files, where `find_problems` printed the same messages SIMPL did. That covers Buffers sharing an output, several analog drivers, `//` placeholder signals, and SIMPL's symbol numbers (`S-2.3`).
-- **Still to confirm:** cases involving SIMPL+ modules or macros, which are marked unconfirmed.
+- **Real job:** on a real public 3-Series classroom program (478 logic symbols, macros, SIMPL+ and SIMPL#), SIMPL compiled clean and `find_problems` reported nothing, matching it. That compile also showed that SIMPL skips the second-driver check when a macro or SIMPL+ module is one of the drivers.
 
 **First version done (2026-11-24):** a fresh Claude Code session used SIMPL Agent in plain English to explain a program, check it (matching SIMPL's F12 exactly) and add a One Shot. SIMPL reloaded the edit and compiled it exactly as predicted.
 
