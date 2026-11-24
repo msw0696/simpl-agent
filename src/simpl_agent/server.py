@@ -43,7 +43,7 @@ TOOL_NAMES = (
     "apply_edits", "edit_history", "undo_last_edit", "restore_version", "wait_for_simpl_save",
 )
 PROGRAM_EXTS = {".smw", ".umc", ".cmc"}
-KNOWN_SIGNATURES = {"SimplWindow": "program", "CresMacro": "macro"}
+KNOWN_SIGNATURES = {"SimplWindow": "program", "CresMacro": "macro", "UserMacro": "macro"}
 MAX_FILE_BYTES = 200 * 1024 * 1024
 
 INSTRUCTIONS = """SIMPL Agent: read, check and edit Crestron SIMPL Windows programs (.smw).
@@ -391,6 +391,17 @@ class Tools(EditTools):
             raise ToolError(f"no signal named {ref!r}; try find_signals")
         return hits[0]
 
+    @staticmethod
+    def _definition(p: Path, lib, s):
+        """Pin names for a symbol: a macro's or SIMPL+ module's own file, else the library."""
+        from .corpus import INSTALLED_MODULES
+
+        if s.code in (an.MACRO_CODE, an.SPLUS_CODE):
+            d = an.module_definition(p, s, INSTALLED_MODULES)
+            if d is not None:
+                return d
+        return lib.get(s.code) if lib else None
+
     def _brief(self, prog: Program, lib, h: int) -> dict[str, Any]:
         s = prog.symbols[h]
         return {"symbol": f"#{h}", "name": an.display_name(s, lib), "folder": an.folder_path(prog, h, lib)}
@@ -446,7 +457,7 @@ class Tools(EditTools):
         p, rev, prog, lib = self._load(path)
         h = self._symbol_ref(prog, symbol)
         s = prog.symbols[h]
-        ls = lib.get(s.code) if lib else None
+        ls = self._definition(p, lib, s)
 
         def pins(letter: str, conns: dict[int, int], total_key: str) -> list[dict[str, Any]]:
             total = s.record.get(total_key)
@@ -495,7 +506,7 @@ class Tools(EditTools):
             out = []
             for sh, n in pairs[:limit]:
                 s = prog.symbols[sh]
-                ls = lib.get(s.code) if lib else None
+                ls = self._definition(p, lib, s)
                 out.append({**self._brief(prog, lib, sh), "pin": f"{letter}{n}",
                             "pin_name": an.pin_label(ls, s, letter, n)})
             return out

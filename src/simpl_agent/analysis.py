@@ -14,11 +14,15 @@ Those two exemptions match the corpus, but SIMPL hasn't confirmed them yet.
 """
 from __future__ import annotations
 
+import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 
-from .catalog.symlib import LibSymbol, SymbolLibrary
+from .catalog.symlib import LibSymbol, SymbolLibrary, parse_tio
+from .smw import rawfile
 from .smw.model import Program, Symbol
 
 FOLDER_CODE = 156
@@ -103,6 +107,60 @@ def simpl_number(prog: Program, handle: int) -> str | None:
         h = parent.handle
 
 
+MACRO_CODE, SPLUS_CODE = 155, 103
+
+
+def module_definition(program_path: Path | None, symbol: Symbol,
+                      installed: Path | None = None) -> LibSymbol | None:
+    """Pin names for a macro or SIMPL+ module, read from its own file.
+
+    Macros (SmC 155) name their file in Nm ('X.umc' or a Crestron 'X.cmc'); the file is
+    in the program's folder or SIMPL's installed modules and holds a Symbol record.
+    SIMPL+ modules (SmC 103) name 'X.usp'; their compiled header 'X.ush' sits beside
+    the program. Returns None when the file isn't found.
+    """
+    if symbol.code not in (MACRO_CODE, SPLUS_CODE) or not symbol.name:
+        return None
+    name = symbol.name.strip()
+    candidates: list[Path] = []
+    folders = [program_path.parent] if program_path is not None else []
+    if installed is not None:
+        folders.append(installed)
+    if symbol.code == SPLUS_CODE:
+        stem = name[:-4] if name.lower().endswith(".usp") else name
+        candidates = [f / f"{stem}.ush" for f in folders]
+    else:
+        candidates = [f / name for f in folders]
+    for c in candidates:
+        fields = _module_fields(str(c))
+        if fields is not None:
+            return LibSymbol(code=symbol.code, name=fields.get("Name", name), fields=fields)
+    return None
+
+
+@lru_cache(maxsize=256)
+def _module_fields_cached(path: str, mtime: float) -> dict[str, str] | None:
+    data = Path(path).read_bytes().decode("latin-1")
+    if path.lower().endswith(".ush"):
+        recs = parse_tio(data)
+        sym = next((r for r in recs if r.get("ObjTp") == "Symbol"), None)
+        return dict(sym) if sym else None
+    raw = rawfile.parse_text(data)
+    sym = raw.first("Symbol")
+    return sym.as_dict() if sym is not None else None
+
+
+def _module_fields(path: str) -> dict[str, str] | None:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    try:
+        return _module_fields_cached(path, st.st_mtime)
+    except (OSError, ValueError):
+        return None
+
+
 def pin_label(ls: LibSymbol | None, symbol: Symbol, letter: str, n: int) -> str:
     """The library's name for input/output/param pin ``n`` (I/O/P), or a generic one.
 
@@ -116,15 +174,30 @@ def pin_label(ls: LibSymbol | None, symbol: Symbol, letter: str, n: int) -> str:
     first_list = {"I": "n1I", "O": "n1O"}.get(letter)
     if first_list:
         n1 = symbol.record.get(first_list)
-        if n1 and n1.isdigit() and n > int(n1) and ls.fields.get("HasExtraPinLists") == "True":
-            return f"list 2 pin {n - int(n1)}"
-    cues = ls.cues(prefix)
-    rep = next((k for k, v in cues.items() if v.endswith("#")), None)
-    if rep is not None and n >= rep:
+        if n1 and n1.isdigit() and n > int(n1):
+            # Pins after the first list continue into list 2 (analog/serial pins on
+            # modules and panels): pin n1+k is the list's k-th cue.
+            list_prefix = {"I": "InputList2Cue", "O": "OutputList2Cue"}[letter]
+            k = n - int(n1)
+            cue = _cue(ls.cues(list_prefix), k)
+            if cue is not None:
+                return cue
+            if ls.fields.get("HasExtraPinLists") == "True" or ls.cues(list_prefix):
+                return f"list 2 pin {k}"
+    return _cue(ls.cues(prefix), n) or generic
+
+
+def _cue(cues: dict[int, str], n: int) -> str | None:
+    """Pin n's name. A pin's own name wins; a name ending in '#' only fills in the
+    numbered pins after it that have no name of their own ('i#' -> i1, i2, ...).
+    Module files can have ordinary pin names that happen to end in '#'."""
+    own = cues.get(n)
+    if own is not None and not own.endswith("#"):
+        return own
+    rep = max((k for k, v in cues.items() if v.endswith("#") and k <= n), default=None)
+    if rep is not None:
         return cues[rep][:-1] + str(n - rep + 1)
-    if n in cues:
-        return cues[n]
-    return generic
+    return own
 
 
 @dataclass

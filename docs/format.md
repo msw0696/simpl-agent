@@ -203,6 +203,23 @@ A fresh Claude Code session, using only the SIMPL Agent tools and skill, was ask
 
 **New SIMPL fact: autosave.** SIMPL writes `<name>.smw.ASV`, an autosave of its in-memory copy. Here it held the version from before the edit. An `.ASV` newer than the `.smw` and different from it may show unsaved work in SIMPL. That isn't used yet; it needs checking.
 
+### Real job: a public DMPS3-4K-150-C classroom program (2026-11-24)
+The program is `bernasbtcnj/crestron` `gpc/dmps3_4k_150_standard.smw`: SIMPL 4.32, 478 logic symbols, 14 macros, 2 SIMPL+ modules, a SIMPL# library and a TSW-760 panel. It was a local test copy only.
+
+- **F12 failed to build modules.** It gave `ERROR (LGCMCVT277)`: Microsoft .NET Compact Framework v3.5 is required, but isn't installed (Crestron Online Help article 1001084). Without it SIMPL can't build the SIMPL# library, so the modules using it (all seven CCI JSON macros), and the program's two SIMPL+ modules, are left out.
+- **That error explains every other message.**
+  - All 50 LGCMCVT102 warnings were signals driven only by those modules (24 by `CCI JSON DigitalRead`, 16 by `SerialRead`, 3 by `AnalogRead`, 5 by `tcnj_inactivity_timer`, 2 by `tcnj_log`).
+  - All 12 LGCMCVT103 notices were signals going only into them.
+  - **A compile error makes module pins vanish.** Compare F12 with `find_problems` only after a clean compile.
+- **No LGCMCVT220 appeared.** `find_problems` had predicted 9, all involving the Lumens camera macros. **Not settled:** it needs a clean compile, after installing .NET Compact Framework 3.5.
+- **The two missing Crestron macros weren't mentioned.** `HD-MD4x1-4K-E v1.0.cmc` and `HD-MD6x2-4K-E v1.1.cmc` aren't in this PC's database, and SIMPL didn't report them in this compile.
+- **Module pin names now come from the modules' own files** (`analysis.module_definition`):
+  - a macro's `.umc` (or a Crestron `.cmc` in `Cresdb\Modules`) holds a `Symbol` record;
+  - a SIMPL+ module's `.ush` header (`.tio` format) holds its pin names;
+  - pins past the first list (`n1I`/`n1O`) use the `InputList2Cue`/`OutputList2Cue` names.
+- **A pin name can end in `#`.** Module files can have ordinary pin names like that, so a pin's own name must win over the "`#` repeats" rule.
+- **User macros (`.umc`)** carry the signature `Sgntr=UserMacro`; Crestron's `.cmc` macros carry `CresMacro`.
+
 ## 8. Still to learn
 **From the F12 test set (`tools/make_f12_samples.py`):**
 - Whether SIMPL 4.32 loads and compiles our records without complaint (files 01, 02, 11).
