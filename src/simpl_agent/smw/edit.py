@@ -688,6 +688,13 @@ class Editor:
             rec.set("mC", "1", after=anchor)
             rec.set("C1", str(child), after="mC")
 
+    def add_device(self, devlib, device: str | int, address: str | int, network: str | int | None = None,
+                   *, allow_unproven: bool = False) -> int:
+        """Place a device at a free address (IP ID) on a network; see device_edit.py."""
+        from .device_edit import add_device
+
+        return add_device(self, devlib, device, address, network, allow_unproven=allow_unproven)
+
     def add_folder(self, name: str, parent: str | int = "Logic") -> int:
         """Add an empty folder (subsystem) inside ``parent``, the way SIMPL 4.3x writes one."""
         if not name or name != name.strip() or "\\" in name or "\r" in name or "\n" in name or len(name) > MAX_NAME:

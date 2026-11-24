@@ -34,6 +34,7 @@ Tools for Crestron SIMPL Windows. They read, check and **edit** programs. Every 
    - **Modules (`add_module`):** wire pins by name in `connect`. SIMPL requires every pin with a plain name; ones you don't connect go on SIMPL's standard placeholders (`//__digital_reserved__` and so on), and the result says how many. `[bracketed]` pins are optional. Every listed parameter needs a value.
      - **Pins that take any type** must be connected explicitly.
      - **SIMPL+ modules** need their compiled `.ush` beside the program; modules with drop-down parameters aren't supported yet.
+   - **Devices (`add_device`):** `device_tree` and `free_ids` show what's there. Ask the user which IP ID to use; never pick one yourself. Give the device's exact library name or code and the `address` (hex, e.g. `03`). Only devices proven against a real SIMPL save can be added for now (TSW-1070, Ethernet Intersystem Communications), on 4-Series Ethernet. The device's symbol appears under the network's symbol with its pins unwired; connect them afterwards with `connect`.
 7. **Read the result:** `changes`, `new_problems` (SIMPL-style warnings the edit introduced), and `next_step`. If a new problem is unintended, fix it with another `apply_edits`, or `undo_last_edit`.
 8. **Tell the user** what changed, using SIMPL's names: S-number, folder and symbol, e.g. "S-2.3 (Logic\Room A: OR)". Pass on `next_step`, which is usually:
    - switch to SIMPL, which says the file changed and offers to reload: click **Yes**;

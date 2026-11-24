@@ -737,6 +737,8 @@ def create_server(tools: Tools | None = None) -> Any:
                  "signal (omit to disconnect), new_signal_type?}; set_parameter {symbol, pin 'P1', value}; "
                  "set_comment {symbol, text}; add_module {module (file name, e.g. 'X.umc'/'X.usp'), folder, "
                  "connect {pin name: signal}, parameters [...] or {name: value}, comment?, new_signal_type?}; "
+                 "add_device {device (exact name or code), address (IP ID the user chose, e.g. '03'), "
+                 "network?} (proven devices only; see free_ids); "
                  "rename_signal {signal, new_name}; rename_folder {folder, "
                  "new_name}; remove_symbol {symbol}; move_symbol {symbol, folder}. New signal names are "
                  "created. Returns changes, new problems and next_step. dry_run=true checks without writing.")

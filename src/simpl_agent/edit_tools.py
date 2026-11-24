@@ -30,12 +30,13 @@ from .smw.edit import EditError, Editor
 from .smw.model import load
 
 SUMMARY_MAX = 120
-CREATING_OPS = {"add_symbol", "add_folder", "add_module"}
+CREATING_OPS = {"add_symbol", "add_folder", "add_module", "add_device"}
 OP_KEYS: dict[str, tuple[set[str], set[str]]] = {
     # op: (required keys, optional keys)
     "add_symbol": ({"symbol", "folder", "inputs", "outputs"}, {"parameters", "comment", "new_signal_type"}),
     "add_folder": ({"name"}, {"parent"}),
     "add_module": ({"module", "folder"}, {"connect", "parameters", "comment", "new_signal_type"}),
+    "add_device": ({"device", "address"}, {"network"}),
     "connect": ({"symbol", "pin"}, {"signal", "new_signal_type"}),
     "set_parameter": ({"symbol", "pin", "value"}, set()),
     "set_comment": ({"symbol", "text"}, set()),
@@ -132,6 +133,11 @@ class EditTools:
                 raise EditError("add_module 'connect' must map pin names to signal names")
             ed.add_module(e["module"], e["folder"], connect=e.get("connect"), parameters=e.get("parameters"),
                           comment=e.get("comment"), new_signal_type=e.get("new_signal_type"))
+        elif op == "add_device":
+            devlib = self._device_library()
+            if devlib is None:
+                raise EditError("SIMPL's device library (iodev.tio) isn't available")
+            ed.add_device(devlib, e["device"], e["address"], e.get("network"))
         elif op == "connect":
             ed.connect(e["symbol"], e["pin"], e.get("signal"), new_signal_type=e.get("new_signal_type", "digital"))
         elif op == "set_parameter":

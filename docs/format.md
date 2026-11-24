@@ -255,6 +255,17 @@ Compiles now run unattended. `smpc` v0.2.0 (MIT, Norgate-AV/smpc; checksum verif
 - **`40/41-hue`:** the public Philips Hue program shipped without `.ush` headers. SIMPL+ files can be compiled without administrator rights by `SPlusCC.exe \rebuild <file.usp> \target series4`, which writes the `.ush`. But the recompiled modules changed pin counts against the macros' saved instances, so SIMPL warns "Number of inputs ... needed adjustment" (codes 202/205) and reports signals inside the macros. Not a clean comparison. The Bridge placed without `GrpSt` compiled with 0 errors.
 - **A compile doesn't save** the file unless SIMPL asks, so the revision stays the same.
 
+### Adding a device (M4, 2026-11-24)
+Decoded from a SIMPL 4.32 save of an empty CP4N (`tests/data/dev-step0.smw`), then a TSW-1070 at IP ID 03 (`dev-step1`), then an EISC at 04 (`dev-step2`). `add_device` (`smw/device_edit.py`) rebuilds both saves byte for byte. Only the header's `PrNm`, the file name, differs.
+
+- **The free slot is split.** Free addresses share one slot record (`Nm=P4Ethernet H=263.514 Ad=03,...,FE`). The slot at the chosen address keeps its handle and gets `mC=1 C1=<device>`; the rest become their own records. Dv records stay sorted by first handle (holds in every corpus file). Ranges can have gaps (`263,265.514`), so a piece can belong further down than the record it came from.
+- **The device's Dv record:** handle max+1, `Nm`/`DvC` and `ObjVer` (default 1) from iodev, `DvVr` like its slot, `Ad`, `SmH`, `RelStat` = `CDSReleaseStatus` (default `Release`), `ProdLine` = `CDSProdLine` if any, then `DbH`, `EtH` and `mC/C*`. A device directly on a network slot has no `SlC`; a device in a fixed slot carries its slot's `SlC`.
+- **Fixed children** (`Expand<n>=FixedSlot`, `Fixed<n>=<device>`): a `FixedSlot` record (`SlC=144`, `Ad=01`), then the child device, with consecutive handles after the parent.
+- **Companions:** `Db` (`Whc=3 Mnf=Crestron Mdl=<name>`) for the device on the network. `Et` (`IPM=255.255.255.0 IPA=<DefaultIP>`) only when iodev gives a `DefaultIP` (the TSW has one; the EISC doesn't). Record-type order in the corpus: `Dv, Cm, Db, Cs, Bk, Bw, Et, VTP, Sm, Sg`.
+- **Logic symbols:** one per device (`SymbolCode`), `Nm` = the symbol library's `Name`, `ObjVer` from there (default 1), `SmVr` from the header, `Cmn1` = the device's name. The network's symbol (e.g. `CP4N Ethernet Devices`) lists them in address order (1,729 of 1,732 corpus containers). A fixed child's symbol sits under its parent's.
+- **Pin counts:** each of the three pin lists is `MinVariable<Inputs|Outputs><List2|List3>` if given, else `Expand_by` when the list exists. Only `n1I`, `n2I` and `n1O` are stored (zeros left out); `mI` is every input, `mO` is output lists 1+2, and `tO` is every output. The same rule reproduces every list-sized built-in symbol of the CP4N (System Monitor 28/42/3 in, 25/44/3 out gives mI=73, mO=69, tO=72). A `PermanentStringSize` parameter defaults to `255d`.
+- **Proven devices:** TSW-1070 (with TSW-1070 Buttons) and the EISC, on `P4Ethernet`. Others are refused until a SIMPL save proves them.
+
 ## 8. Still to learn
 **From the F12 test set (`tools/make_f12_samples.py`):**
 - Whether SIMPL 4.32 loads and compiles our records without complaint (files 01, 02, 11).
@@ -264,4 +275,4 @@ Compiles now run unattended. `smpc` v0.2.0 (MIT, Norgate-AV/smpc; checksum verif
 **Still unknown:**
 - `ObjVer` (always `1` on simple symbols), `n2I`, `SgTf`, `Fx`, and `SgTp` 1, 6 and 31.
 - Which pins each symbol requires (what makes `CF=1`).
-- How devices are added (M4).
+- How SIMPL adds devices other than the proven ones (Cresnet, cards, configurable slots).

@@ -16,15 +16,19 @@ from pathlib import Path
 
 from .symlib import DEFAULT_SYMLIB, LibSymbol, SymbolLibrary, parse_tio
 
-INDEX_VERSION = 1
+INDEX_VERSION = 3
 KEEP_FIELDS = {
     "Name", "Code", "Hint", "ObjVer", "Smpl-C", "DeviceCode", "SymbolTree", "ProgramTree",
     "NumFixedInputs", "NumFixedOutputs", "NumFixedParams",
     "MinVariableInputs", "MaxVariableInputs", "MinVariableOutputs", "MaxVariableOutputs",
     "MaxVariableParams", "Expand", "OffsetOutputs", "FixedInputPosition", "SymJam",
-    "CDSReleaseStatus", "HelpID",
+    "CDSReleaseStatus", "HelpID", "Expand_by", "MinVariableParams",
 }
-KEEP_PREFIXES = ("InputCue", "OutputCue", "ParamCue", "InputSigType", "OutputSigType", "ParamSigType", "DefVal")
+KEEP_PREFIXES = ("InputCue", "OutputCue", "ParamCue", "InputSigType", "OutputSigType", "ParamSigType", "DefVal",
+                 "MinVariableInputsList", "MinVariableOutputsList")
+# Device symbols (device_edit.symbol_counts) need to know which pin lists exist; the first
+# name of each list is enough (all of them would add ~50 MB).
+LIST_FIRST_CUES = {"InputList2Cue1", "InputList3Cue1", "OutputList2Cue1", "OutputList3Cue1"}
 LIST2_RE = re.compile(r"^(InputList2|OutputList2|InputList3|OutputList3)")
 
 
@@ -36,7 +40,7 @@ def cache_dir() -> Path:
 
 
 def _slim(rec: dict[str, str]) -> dict[str, str]:
-    out = {k: v for k, v in rec.items() if k in KEEP_FIELDS or k.startswith(KEEP_PREFIXES)}
+    out = {k: v for k, v in rec.items() if k in KEEP_FIELDS or k in LIST_FIRST_CUES or k.startswith(KEEP_PREFIXES)}
     if any(LIST2_RE.match(k) for k in rec):
         out["HasExtraPinLists"] = "True"
     return out
