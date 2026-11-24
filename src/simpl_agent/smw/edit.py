@@ -63,11 +63,17 @@ class Editor:
         raw: RawFile,
         library: SymbolLibrary | None = None,
         verified_codes: set[int] | None | str = "default",
+        program_path: Path | None = None,
+        installed_modules: Path | None = None,
     ) -> None:
         """``verified_codes``: codes add_symbol may build; "default" loads the shipped list,
-        None allows every simple symbol (tests only)."""
+        None allows every simple symbol (tests only). ``program_path`` lets add_module find
+        module files beside the program; ``installed_modules`` is SIMPL's Cresdb\\Modules."""
         self.raw = raw
         self.lib = library
+        self.program_path = Path(program_path) if program_path else None
+        self.installed_modules = installed_modules
+        self.allow_pin_groups = False  # experiments only; never reachable from the MCP tools
         self.verified_codes = load_verified_codes() if verified_codes == "default" else verified_codes
         self.log = EditLog()
         self.prog: Program = load(raw)
@@ -500,6 +506,154 @@ class Editor:
         self._reload()
         self.log.add(f"moved #{s.handle} to folder #{target}")
 
+    # ------------------------------------------------------------ modules
+    def module_definition(self, module: str):
+        """A macro (.umc/.cmc) or SIMPL+ (.usp) module's definition and layout."""
+        from .. import analysis as an
+
+        name = str(module).strip()
+        low = name.lower()
+        if low.endswith((".umc", ".cmc")):
+            code = an.MACRO_CODE
+        elif low.endswith(".usp"):
+            code = an.SPLUS_CODE
+        else:
+            raise EditError(f"module must be a .umc or .cmc macro or a .usp SIMPL+ module file name (got {name!r})")
+        if any(c in name for c in "\\/:"):
+            raise EditError("give the module's file name only; it must sit next to the program "
+                            "(or, for Crestron .cmc macros, in SIMPL's installed modules)")
+        probe = Symbol(handle=0, code=code, name=name, parent=None, children=[], inputs={}, outputs={},
+                       params={}, device=None, comment=None, record=Record())
+        d = an.module_definition(self.program_path, probe, self.installed_modules)
+        if d is None:
+            where = "next to the program" + (" or in SIMPL's installed modules" if code == an.MACRO_CODE else "")
+            need = f"{name[:-4]}.ush (compile the SIMPL+ module in SIMPL once)" if code == an.SPLUS_CODE else name
+            raise EditError(f"can't find {need} {where}")
+        if code == an.SPLUS_CODE:
+            if self.program_path is None or not (self.program_path.parent / name).exists():
+                raise EditError(f"{name} must be next to the program so SIMPL can compile it")
+            if an.module_has_parameter_lists(self.program_path, name):
+                raise EditError(f"{name} has drop-down parameters; adding those isn't proven yet")
+        if any("[~BeginGroup~]" in v or "[~EndGroup~]" in v for v in d.fields.values()) and not self.allow_pin_groups:
+            # SIMPL stores per-pin group state (GrpStI/GrpStO) for these: 13 of 13 in the corpus.
+            raise EditError(f"{name} groups its pins; adding modules with pin groups isn't proven yet")
+        return code, d, an.module_layout(code, d)
+
+    def add_module(
+        self,
+        module: str,
+        folder: str | int,
+        connect: dict[str, str] | None = None,
+        parameters: dict[str, str] | list[str] | None = None,
+        comment: str | None = None,
+        new_signal_type: str | None = None,
+    ) -> int:
+        """Place a macro or SIMPL+ module in ``folder`` and wire pins by name.
+
+        ``connect`` maps pin names (as in the module file, or 'I3'/'O2') to signal names;
+        pins not listed stay unconnected (normal for modules). New signals get the pin's
+        type (digital/analog/serial) unless the pin takes any type, when
+        ``new_signal_type`` decides. ``parameters`` gives every real parameter, in order or
+        by name; placeholder slots ([~UNUSED~], [Reference Name]) stay empty.
+        """
+        from .. import analysis as an
+
+        code, d, lay = self.module_definition(module)
+        parent = self.find_folder(folder)
+        connect = dict(connect or {})
+
+        def index(letter: str) -> dict[str, int]:
+            pins = lay["inputs"] if letter == "I" else lay["outputs"]
+            names: dict[str, int] = {}
+            for n, nm, _ in pins:
+                names.setdefault(nm.lower(), n)
+                names[f"{letter.lower()}{n}"] = n
+            return names
+
+        by_in, by_out = index("I"), index("O")
+        in_pins = {n: (nm, t) for n, nm, t in lay["inputs"]}
+        out_pins = {n: (nm, t) for n, nm, t in lay["outputs"]}
+        wiring: list[tuple[str, int, str]] = []
+        for pin, sig in connect.items():
+            key = str(pin).strip().lower()
+            letter = n = None
+            if key in by_in and key not in by_out:
+                letter, n = "I", by_in[key]
+            elif key in by_out and key not in by_in:
+                letter, n = "O", by_out[key]
+            elif key in by_in and key in by_out:
+                raise EditError(f"pin {pin!r} is both an input and an output; use 'I<n>' or 'O<n>'")
+            else:
+                raise EditError(f"{module} has no pin {pin!r}; see module_details for its pin names")
+            nm, _ = (in_pins if letter == "I" else out_pins)[n]
+            if nm == an.UNUSED_PIN:
+                raise EditError(f"{letter}{n} is an unused placeholder pin in {module}")
+            if sig in (None, ""):
+                continue
+            wiring.append((letter, n, sig))
+
+        real_params = [(n, nm) for n, nm, _ in lay["parameters"] if nm not in (an.UNUSED_PIN, an.REFERENCE_NAME)]
+        values = {n: "" for n, _, _ in lay["parameters"]}
+        if isinstance(parameters, dict):
+            lookup = {nm.lower(): n for n, nm in real_params}
+            for k, v in parameters.items():
+                if str(k).lower() not in lookup:
+                    raise EditError(f"{module} has no parameter {k!r}; its parameters are {[nm for _, nm in real_params]}")
+                values[lookup[str(k).lower()]] = str(v)
+        elif parameters is not None:
+            if len(parameters) != len(real_params):
+                raise EditError(f"{module} takes {len(real_params)} parameter(s): {[nm for _, nm in real_params]}")
+            for (n, _), v in zip(real_params, parameters, strict=True):
+                values[n] = str(v)
+        missing = [nm for n, nm in real_params if values[n] == ""]
+        if missing:
+            raise EditError(f"{module}: give a value for every parameter; missing {missing}")
+        if any(c in v for v in values.values() for c in "\r\n"):
+            raise EditError("parameter values must be one line")
+
+        snapshot = self._snapshot()
+        try:
+            ins: dict[int, int] = {}
+            outs: dict[int, int] = {}
+            for letter, n, sig in wiring:
+                pin_type = ((in_pins if letter == "I" else out_pins)[n][1] or "").lower()
+                n1 = lay["n1I"] if letter == "I" else lay["n1O"]
+                if not pin_type and code == an.SPLUS_CODE and n <= n1:
+                    pin_type = "digital"  # untyped first-list SIMPL+ pins: digital in 1,698 of 1,698
+                fixed = [t for t in ("digital", "analog", "serial") if t in pin_type or (t == "serial" and "string" in pin_type)]
+                create = fixed[0] if len(fixed) == 1 else (new_signal_type or None)
+                try:
+                    h = self.signal_for(sig, create_type=create)
+                except EditError:
+                    if create is None:
+                        raise EditError(f"pin {letter}{n} takes more than one signal type; set new_signal_type "
+                                        f"for new signal {sig!r}") from None
+                    raise
+                sg = self.prog.signals.get(h)
+                builtin = h in set(self.prog.builtin_signals.values())
+                if fixed and sg is not None and not builtin and sg.type not in fixed:
+                    raise EditError(f"pin {letter}{n} ({(in_pins if letter == 'I' else out_pins)[n][0]}) takes "
+                                    f"{'/'.join(fixed)} signals, but {sg.name!r} is {sg.type}")
+                if letter == "O":
+                    self.check_can_drive(h, d)
+                    outs[n] = h
+                else:
+                    ins[n] = h
+            h = self._next_handle("Sm")
+            lines = module_lines(
+                handle=h, code=code, name=str(module).strip(), objver=d.fields.get("ObjVer") or "1",
+                parent=parent, n1i=lay["n1I"], n2i=lay["n2I"], n1o=lay["n1O"], n2o=lay["n2O"],
+                inputs=ins, outputs=outs, params=[values[n] for n, _, _ in lay["parameters"]], comment=comment,
+            )
+            self._insert_record(Record(lines=lines), "Sm", after_types=("Bw", "Bk"))
+            self._append_child(parent, h)
+        except Exception:
+            self._restore(snapshot)
+            raise
+        self._reload()
+        self.log.add(f"added module {module} #{h} in folder #{parent}")
+        return h
+
     def _append_child(self, parent: int, child: int) -> None:
         rec = self.prog.symbols[parent].record
         n = int(rec.get("mC") or 0) + 1
@@ -539,6 +693,49 @@ class Editor:
         self._reload()
         self.log.add(f"added folder {name!r} #{h} in #{par}")
         return h
+
+
+def module_lines(
+    *,
+    handle: int,
+    code: int,
+    name: str,
+    objver: str,
+    parent: int,
+    n1i: int,
+    n2i: int,
+    n1o: int,
+    n2o: int,
+    inputs: dict[int, int],
+    outputs: dict[int, int],
+    params: list[str],
+    comment: str | list[str] | None,
+) -> list[tuple[str | None, str]]:
+    """The record SIMPL 4.3x writes for a placed macro (155) or SIMPL+ module (103).
+
+    No SmVr. Count keys of zero are left out; SIMPL+ never stores n2O (its list-2
+    outputs still count in mO/tO). Pins are sparse. Proven by rebuilding placed
+    modules from the corpus exactly (tests/test_modules.py).
+    """
+    lines: list[tuple[str | None, str]] = [
+        ("ObjTp", "Sm"), ("H", str(handle)), ("SmC", str(code)), ("Nm", name), ("ObjVer", objver),
+        ("PrH", str(parent)), ("CF", "2"),
+    ]
+    counts = [("n1I", n1i), ("n2I", n2i), ("n1O", n1o)] + ([("n2O", n2o)] if code == 155 else [])
+    lines += [(k, str(v)) for k, v in counts if v]
+    comments = [comment] if isinstance(comment, str) else list(comment or [])
+    lines += [(f"Cmn{i}", c) for i, c in enumerate(comments, 1)]
+    mi, mo = n1i + n2i, n1o + n2o
+    if mi:
+        lines.append(("mI", str(mi)))
+        lines += [(f"I{n}", str(h)) for n, h in sorted(inputs.items())]
+    if mo:
+        lines += [("mO", str(mo)), ("tO", str(mo))]
+        lines += [(f"O{n}", str(h)) for n, h in sorted(outputs.items())]
+    if params:
+        lines.append(("mP", str(len(params))))
+        lines += [(f"P{i}", v) for i, v in enumerate(params, 1)]
+    return lines
 
 
 def folder_lines(

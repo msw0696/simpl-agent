@@ -41,6 +41,7 @@ TOOL_NAMES = (
     "simpl_agent_status", "describe_program", "find_library_symbols", "library_symbol_details",
     "folder_tree", "list_folder", "show_symbol", "find_signals", "follow_signal", "find_problems",
     "apply_edits", "edit_history", "undo_last_edit", "restore_version", "wait_for_simpl_save",
+    "module_details",
 )
 PROGRAM_EXTS = {".smw", ".umc", ".cmc"}
 KNOWN_SIGNATURES = {"SimplWindow": "program", "CresMacro": "macro", "UserMacro": "macro"}
@@ -523,6 +524,31 @@ class Tools(EditTools):
             out["macro_output_argument"] = [f"O{n}" for _, n in flow.arg_out[h]]
         return out
 
+    def module_details(self, path: str, module: str) -> dict[str, Any]:
+        """A macro's or SIMPL+ module's pins and parameters, as SIMPL would place it in ``path``."""
+        from .corpus import INSTALLED_MODULES
+        from .smw.edit import EditError, Editor
+
+        p, data, _ = self._read_program(path)
+        ed = Editor(rawfile.parse(data), None, program_path=p, installed_modules=INSTALLED_MODULES)
+        try:
+            code, d, lay = ed.module_definition(module)
+        except EditError as e:
+            raise ToolError(str(e)) from e
+
+        def rows(items):
+            return [{"pin": f"{n}", "name": nm, "type": t} for n, nm, t in items if nm != an.UNUSED_PIN]
+
+        params = [{"pin": f"P{n}", "name": nm, "type": t} for n, nm, t in lay["parameters"]
+                  if nm not in (an.UNUSED_PIN, an.REFERENCE_NAME)]
+        return {
+            "module": module, "kind": "macro" if code == an.MACRO_CODE else "SIMPL+",
+            "name": d.name, "inputs": rows(lay["inputs"]), "outputs": rows(lay["outputs"]),
+            "parameters_required": params,
+            "note": "Wire pins by these names in apply_edits add_module 'connect'. Unlisted pins stay "
+                    "unconnected. Every listed parameter needs a value.",
+        }
+
     def find_problems(self, path: str, limit: int = 200) -> dict[str, Any]:
         p, rev, prog, lib = self._load(path)
         probs = an.find_problems(prog, lib)
@@ -632,13 +658,21 @@ def create_server(tools: Tools | None = None) -> Any:
                  "inputs [signal names, in pin order], outputs [...], parameters?, comment?, "
                  "new_signal_type?}; add_folder {name, parent?}; connect {symbol '#h', pin 'I2'/'O1', "
                  "signal (omit to disconnect), new_signal_type?}; set_parameter {symbol, pin 'P1', value}; "
-                 "set_comment {symbol, text}; rename_signal {signal, new_name}; rename_folder {folder, "
+                 "set_comment {symbol, text}; add_module {module (file name, e.g. 'X.umc'/'X.usp'), folder, "
+                 "connect {pin name: signal}, parameters [...] or {name: value}, comment?, new_signal_type?}; "
+                 "rename_signal {signal, new_name}; rename_folder {folder, "
                  "new_name}; remove_symbol {symbol}; move_symbol {symbol, folder}. New signal names are "
                  "created. Returns changes, new problems and next_step. dry_run=true checks without writing.")
     async def apply_edits(path: str, revision: str, summary: str, edits: list[dict[str, Any]],
                           dry_run: bool = False, user_confirmed_saved: bool = False) -> dict[str, Any]:
         return await _run("apply_edits", path=path, revision=revision, summary=summary, edits=edits,
                           dry_run=dry_run, user_confirmed_saved=user_confirmed_saved)
+
+    @server.tool(name="module_details", description="A macro (.umc/.cmc) or SIMPL+ module (.usp) "
+                 "beside the program: its input/output pin names and types and the parameters it "
+                 "needs, before placing it with apply_edits add_module. module: the file name.")
+    async def module_details(path: str, module: str) -> dict[str, Any]:
+        return await _run("module_details", path=path, module=module)
 
     @server.tool(name="edit_history", description="SIMPL Agent's change history for a program (newest "
                  "last), and whether the file changed outside SIMPL Agent since the last change.")

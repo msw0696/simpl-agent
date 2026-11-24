@@ -30,11 +30,12 @@ from .smw.edit import EditError, Editor
 from .smw.model import load
 
 SUMMARY_MAX = 120
-CREATING_OPS = {"add_symbol", "add_folder"}
+CREATING_OPS = {"add_symbol", "add_folder", "add_module"}
 OP_KEYS: dict[str, tuple[set[str], set[str]]] = {
     # op: (required keys, optional keys)
     "add_symbol": ({"symbol", "folder", "inputs", "outputs"}, {"parameters", "comment", "new_signal_type"}),
     "add_folder": ({"name"}, {"parent"}),
+    "add_module": ({"module", "folder"}, {"connect", "parameters", "comment", "new_signal_type"}),
     "connect": ({"symbol", "pin"}, {"signal", "new_signal_type"}),
     "set_parameter": ({"symbol", "pin", "value"}, set()),
     "set_comment": ({"symbol", "text"}, set()),
@@ -126,6 +127,11 @@ class EditTools:
                           new_signal_type=e.get("new_signal_type", "digital"))
         elif op == "add_folder":
             ed.add_folder(e["name"], e.get("parent", "Logic"))
+        elif op == "add_module":
+            if e.get("connect") is not None and not isinstance(e["connect"], dict):
+                raise EditError("add_module 'connect' must map pin names to signal names")
+            ed.add_module(e["module"], e["folder"], connect=e.get("connect"), parameters=e.get("parameters"),
+                          comment=e.get("comment"), new_signal_type=e.get("new_signal_type"))
         elif op == "connect":
             ed.connect(e["symbol"], e["pin"], e.get("signal"), new_signal_type=e.get("new_signal_type", "digital"))
         elif op == "set_parameter":
@@ -161,7 +167,9 @@ class EditTools:
             raise ToolError(f"this file was saved by SIMPL {rel or '?'}; adding symbols or folders is only "
                             "proven for files saved by SIMPL 4.3x. Open and save it in SIMPL 4.32 first.")
         lib = self.index().library
-        ed = Editor(rawfile.parse(data), lib)
+        from .corpus import INSTALLED_MODULES
+
+        ed = Editor(rawfile.parse(data), lib, program_path=p, installed_modules=INSTALLED_MODULES)
         before_struct = structural_problems(ed.prog)
         before_probs = _problem_keys(ed.prog, lib)
         for i, e in enumerate(edits, 1):

@@ -139,6 +139,62 @@ def module_definition(program_path: Path | None, symbol: Symbol,
     return None
 
 
+UNUSED_PIN = "[~UNUSED~]"
+REFERENCE_NAME = "[Reference Name]"
+
+
+def _int(v: str | None) -> int:
+    return int(v) if v and str(v).lstrip("-").isdigit() else 0
+
+
+def module_layout(code: int, d: LibSymbol) -> dict:
+    """A module's pins as SIMPL places it, from its definition (docs/format.md "Modules").
+
+    Macros (155) use NumFixedInputs/Outputs/Params. SIMPL+ modules (103) use the
+    minimum array sizes (MinVariable*, per list); parameters are NumFixedParams plus
+    MinVariableParams. Proven by rebuilding 610 of 631 placed modules in the corpus.
+    Returns counts and, per pin, (number, name, type).
+    """
+    f = d.fields
+    if code == MACRO_CODE:
+        n1i, n2i = _int(f.get("NumFixedInputs")), 0
+        n1o, n2o = _int(f.get("NumFixedOutputs")), 0
+        npar = _int(f.get("NumFixedParams"))
+    else:
+        n1i, n2i = _int(f.get("MinVariableInputs")), _int(f.get("MinVariableInputsList2"))
+        n1o, n2o = _int(f.get("MinVariableOutputs")), _int(f.get("MinVariableOutputsList2"))
+        npar = _int(f.get("NumFixedParams")) + _int(f.get("MinVariableParams"))
+
+    def pins(letter: str, n1: int, n2: int) -> list[tuple[int, str, str]]:
+        p1, p2 = ("InputCue", "InputList2Cue") if letter == "I" else ("OutputCue", "OutputList2Cue")
+        t1, t2 = ("InputSigType", "InputList2SigType") if letter == "I" else ("OutputSigType", "OutputList2SigType")
+        c1, c2 = d.cues(p1), d.cues(p2)
+        out = []
+        for n in range(1, n1 + 1):
+            out.append((n, _cue(c1, n) or f"{letter.lower()}{n}", f.get(f"{t1}{n}") or f.get(f"{t1}1") or ""))
+        for k in range(1, n2 + 1):
+            out.append((n1 + k, _cue(c2, k) or f"list 2 pin {k}", f.get(f"{t2}{k}") or f.get(f"{t2}1") or ""))
+        return out
+
+    pc = d.cues("ParamCue")
+    params = [(n, pc.get(n, f"p{n}"), f.get(f"ParamSigType{n}") or "") for n in range(1, npar + 1)]
+    return {"n1I": n1i, "n2I": n2i, "n1O": n1o, "n2O": n2o,
+            "inputs": pins("I", n1i, n2i), "outputs": pins("O", n1o, n2o), "parameters": params}
+
+
+def module_has_parameter_lists(path: Path | None, symbol_name: str) -> bool:
+    """True for a SIMPL+ module whose header has parameter drop-down labels ('Lbl'):
+    SIMPL then stores the chosen label (Plb) too, which isn't proven yet."""
+    if path is None or not symbol_name.lower().endswith(".usp"):
+        return False
+    ush = path.parent / (symbol_name[:-4] + ".ush")
+    try:
+        text = ush.read_bytes().decode("latin-1")
+    except OSError:
+        return False
+    return re.search(r"^\s*Lbl\d*=", text, re.M) is not None
+
+
 @lru_cache(maxsize=256)
 def _module_fields_cached(path: str, mtime: float) -> dict[str, str] | None:
     data = Path(path).read_bytes().decode("latin-1")
