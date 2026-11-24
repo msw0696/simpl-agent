@@ -114,11 +114,30 @@ The gate for everything else: can we change a `.smw` file without SIMPL noticing
 - **Checked against SIMPL 4.32:** ten hand-compiled test files, where `find_problems` printed the same messages SIMPL did. That covers Buffers sharing an output, several analog drivers, `//` placeholder signals, and SIMPL's symbol numbers (`S-2.3`).
 - **Still to confirm:** cases involving SIMPL+ modules or macros, which are marked unconfirmed.
 
-### M3: Edit and safety ⏭
+### M3: Edit and safety 🚧 (built; live test in SIMPL pending)
 
-- **`apply_edits`**: a batch of operations applied together, with a one-line summary, then a list of any new problems. Operations: add a folder, add a symbol, connect pins, add a signal, rename a signal, set parameters, set a comment, move a symbol, and remove a symbol.
-- **History:** a backup next to the program for every edit, plus `edit_history`, `undo_last_edit`, `restore_version` and `redo_after_save`.
-- **Live link to SIMPL Windows:** `ask_simpl_to_save`, `ask_simpl_to_reload` and `wait_for_simpl_save`. Edits are refused while SIMPL has unsaved changes. SIMPL runs as administrator, which can block messages to its window. If it does, the fallback is to ask the user to click **Yes** when SIMPL offers to reload.
+- **`apply_edits`**: a batch of operations applied together, all or nothing, with a one-line summary, then a list of any new problems.
+  - **Operations:** add a folder, add a symbol, connect or disconnect a pin, set a parameter, set a comment, rename a signal, rename a folder, move a symbol, and remove a symbol.
+  - **No standalone "add a signal":** new signals are created when a pin names them, and signals left unused by a removal are deleted, because SIMPL doesn't keep unused signals.
+- **Write gate.** A write must pass all of these, or nothing is written:
+  - the file is a `.smw` with CRLF line endings;
+  - its revision matches the last read, re-checked just before writing;
+  - SIMPL has no unsaved changes to it;
+  - for ops that add symbols or folders, it was saved by SIMPL 4.3x;
+  - the result passes the structural checks.
+
+  `dry_run` checks an edit without writing it.
+- **History:**
+  - every edit is backed up in `.simpl-agent/` next to the program; SIMPL's archive skips that folder;
+  - `edit_history`;
+  - `undo_last_edit`, only while the file is exactly as the edit left it;
+  - `restore_version`, which previews what would be lost and needs confirmation.
+  - **Proof:** the pin-key placement is proven against every wired pin SIMPL 4.3x saved in the corpus.
+- **Live link to SIMPL Windows:** SIMPL runs as administrator, so SIMPL Agent can't press Save or Reload in it.
+  - `simpl_agent_status` reads SIMPL's window title.
+  - `wait_for_simpl_save` watches the file.
+  - After an edit, the user reopens the program in SIMPL without saving.
+- **Not yet:** `redo_after_save`, for replaying an edit that SIMPL's save overwrote.
 - **Acceptance tests:**
   - "Add a second display in Room A that turns on and off with the primary display."
   - "Rename the Lobby folder to Reception and keep the signals wired."

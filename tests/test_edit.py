@@ -85,11 +85,13 @@ def test_buffer_may_share_outputs(ed: Editor) -> None:
 def test_add_symbol_pin_counts_and_params(ed: Editor) -> None:
     with pytest.raises(EditError, match="each extra input"):
         ed.add_symbol(20, "Logic", inputs=["room_enable", "a", "b"], outputs=["c"])
+    with pytest.raises(EditError, match="wire every"):
+        ed.add_symbol(9, "Logic", inputs=["a", None, None], outputs=["b", "c"], params=["2s"])
     with pytest.raises(EditError, match="parameter"):
-        ed.add_symbol(9, "Logic", inputs=["a", None, None], outputs=["b", None])
-    h = ed.add_symbol(9, "Logic", inputs=["trig", None, None], outputs=["pulse", None], params=["2s"])
+        ed.add_symbol(9, "Logic", inputs=["a", "0", "0"], outputs=["b", "c"])
+    h = ed.add_symbol(9, "Logic", inputs=["trig", "0", "0"], outputs=["pulse", "pulse_n"], params=["2s"])
     assert ed.prog.symbols[h].params == {1: "2s"}
-    assert ed.prog.symbols[h].inputs == {1: ed.find_signal("trig")}
+    assert ed.prog.symbols[h].inputs == {1: ed.find_signal("trig"), 2: 1, 3: 1}
 
 
 def test_add_symbol_refuses_complex_and_unknown(ed: Editor) -> None:
@@ -104,8 +106,12 @@ def test_add_symbol_refuses_complex_and_unknown(ed: Editor) -> None:
 def test_set_comment(ed: Editor) -> None:
     ed.set_comment("#5", "drives room_out")
     assert ed.prog.symbols[5].comment == "drives room_out"
+    ed.set_comment("#5", "two\nlines")
+    assert ed.prog.symbols[5].record.get("Cmn1") == "two" + "\\" * 2 + "lines"  # SIMPL's line break
+    ed.set_comment("#5", "")
+    assert "Cmn1" not in ed.prog.symbols[5].record
     with pytest.raises(EditError):
-        ed.set_comment("#5", "two\nlines")
+        ed.set_comment("#5", "back" + "\\" + "slash")
 
 
 def test_save_backs_up_and_writes(tmp_path, ed: Editor, tiny: bytes) -> None:

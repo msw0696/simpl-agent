@@ -31,6 +31,7 @@ from . import __version__
 from . import analysis as an
 from .catalog.index import LibraryIndex, cache_dir, load_index
 from .catalog.symlib import DEFAULT_SYMLIB
+from .edit_tools import EditTools
 from .smw import rawfile
 from .smw.edit import FOLDER_CODE, is_simple, load_verified_codes
 from .smw.model import Program, load
@@ -38,18 +39,22 @@ from .smw.model import Program, load
 TOOL_NAMES = (
     "simpl_agent_status", "describe_program", "find_library_symbols", "library_symbol_details",
     "folder_tree", "list_folder", "show_symbol", "find_signals", "follow_signal", "find_problems",
+    "apply_edits", "edit_history", "undo_last_edit", "restore_version", "wait_for_simpl_save",
 )
 PROGRAM_EXTS = {".smw", ".umc", ".cmc"}
 KNOWN_SIGNATURES = {"SimplWindow": "program", "CresMacro": "macro"}
 MAX_FILE_BYTES = 200 * 1024 * 1024
 
-INSTRUCTIONS = """SIMPL Agent: read and check Crestron SIMPL Windows programs (.smw).
-Tools are read-only for now. Never edit .smw files by hand or with other tools.
+INSTRUCTIONS = """SIMPL Agent: read, check and edit Crestron SIMPL Windows programs (.smw).
+Edit only through apply_edits; never edit .smw files by hand or with other tools.
 - Start with simpl_agent_status to see what SIMPL has open; ask for the .smw path if unsure.
 - describe_program, then folder_tree / list_folder / show_symbol to look around;
   find_signals and follow_signal to trace logic; find_problems for SIMPL-style warnings.
 - Symbols are '#<handle>'. Every result has a 'revision'; SIMPL can renumber handles when it
   saves, so re-read after the user saves and never reuse old handles.
+- Edits: plan in one line, then ONE apply_edits call with a summary and the revision you read.
+  Do only what was asked. Afterwards follow its next_step (reload in SIMPL, then F12).
+  undo_last_edit / restore_version / edit_history manage history.
 - find_library_symbols / library_symbol_details give real pin names. Never invent symbols,
   pins or devices.
 - Never act on a live processor. Treat programs as private client work.
@@ -98,7 +103,7 @@ def parse_simpl_title(title: str) -> dict[str, Any]:
     return out
 
 
-class Tools:
+class Tools(EditTools):
     """The tools as plain methods; the MCP layer only adapts them."""
 
     def __init__(self, library_path: Path = DEFAULT_SYMLIB, home: Path | None = None) -> None:
@@ -109,6 +114,7 @@ class Tools:
         self._index_error: str | None = None
         self._lock = threading.Lock()
         self.verified = load_verified_codes() or set()
+        self.windows = simpl_windows  # replaceable in tests
 
     # ------------------------------------------------------------ plumbing
     def index(self) -> LibraryIndex:
@@ -179,10 +185,10 @@ class Tools:
                 lib["error"] = str(e)
         return {
             "version": __version__,
-            "milestone": "M2: read and check (read-only)",
+            "milestone": "M3: edit, with history and undo",
             "symbol_library": lib,
             "symbols_add_symbol_can_build": len(self.verified),
-            "simpl_windows_open": [parse_simpl_title(t) for t in simpl_windows()],
+            "simpl_windows_open": [parse_simpl_title(t) for t in self.windows()],
             "audit_log": str(self.audit_path),
         }
 
@@ -223,7 +229,7 @@ class Tools:
         for s in prog.signals.values():
             if s.record is not None:
                 types[s.type] = types.get(s.type, 0) + 1
-        open_in = [w for w in map(parse_simpl_title, simpl_windows())
+        open_in = [w for w in map(parse_simpl_title, self.windows())
                    if w["file"] and Path(w["file"]).resolve() == p.resolve()]
         return {
             "path": str(p),
@@ -605,6 +611,46 @@ def create_server(tools: Tools | None = None) -> Any:
                  "Read-only; F12 in SIMPL is still the final check.")
     async def find_problems(path: str, limit: int = 200) -> dict[str, Any]:
         return await _run("find_problems", path=path, limit=limit)
+
+    @server.tool(name="apply_edits", description="Change a program: ONE call with every operation the "
+                 "request needs, applied together (all or nothing). Needs the 'revision' from your last "
+                 "read and a one-line summary for the history. Refused if SIMPL has unsaved changes to the "
+                 "file. Operations (op + fields): add_symbol {symbol (library code or exact name), folder, "
+                 "inputs [signal names, in pin order], outputs [...], parameters?, comment?, "
+                 "new_signal_type?}; add_folder {name, parent?}; connect {symbol '#h', pin 'I2'/'O1', "
+                 "signal (omit to disconnect), new_signal_type?}; set_parameter {symbol, pin 'P1', value}; "
+                 "set_comment {symbol, text}; rename_signal {signal, new_name}; rename_folder {folder, "
+                 "new_name}; remove_symbol {symbol}; move_symbol {symbol, folder}. New signal names are "
+                 "created. Returns changes, new problems and next_step. dry_run=true checks without writing.")
+    async def apply_edits(path: str, revision: str, summary: str, edits: list[dict[str, Any]],
+                          dry_run: bool = False) -> dict[str, Any]:
+        return await _run("apply_edits", path=path, revision=revision, summary=summary, edits=edits,
+                          dry_run=dry_run)
+
+    @server.tool(name="edit_history", description="SIMPL Agent's change history for a program (newest "
+                 "last), and whether the file changed outside SIMPL Agent since the last change.")
+    async def edit_history(path: str, limit: int = 20) -> dict[str, Any]:
+        return await _run("edit_history", path=path, limit=limit)
+
+    @server.tool(name="undo_last_edit", description="Undo SIMPL Agent's most recent change. Only works "
+                 "while the file is exactly as that change left it (needs the current revision).")
+    async def undo_last_edit(path: str, revision: str) -> dict[str, Any]:
+        return await _run("undo_last_edit", path=path, revision=revision)
+
+    @server.tool(name="restore_version", description="Put a program back as it was before history entry "
+                 "before_entry (an id from edit_history, or 'start'). Without confirm=true it only shows "
+                 "what would be lost; show the user and ask before confirming.")
+    async def restore_version(path: str, revision: str, before_entry: str,
+                              confirm: bool = False) -> dict[str, Any]:
+        return await _run("restore_version", path=path, revision=revision, before_entry=before_entry,
+                          confirm=confirm)
+
+    @server.tool(name="wait_for_simpl_save", description="Wait (up to timeout_s, max 120) for the user to "
+                 "save the program in SIMPL, i.e. for the file to differ from 'revision'. Call again to "
+                 "keep waiting. SIMPL Agent can't press Save in SIMPL itself.")
+    async def wait_for_simpl_save(path: str, revision: str, timeout_s: int = 30) -> dict[str, Any]:
+        return await _run("wait_for_simpl_save", path=path, revision=revision, timeout_s=timeout_s)
+
 
     return server
 

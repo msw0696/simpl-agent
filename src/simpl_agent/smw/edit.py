@@ -204,6 +204,7 @@ class Editor:
         comment: str | None = None,
         new_signal_type: str = "digital",
         allow_second_driver: bool = False,
+        allow_empty_pins: bool = False,
     ) -> int:
         """Add a simple logic symbol to ``folder``. Pins are wired by position.
 
@@ -239,16 +240,20 @@ class Editor:
         if len(params) < n_fixed_par:
             raise EditError(f"{ls.name} needs {n_fixed_par} parameter(s): {list(ls.cues('ParamCue').values())}")
 
+        if not allow_empty_pins and (any(r in (None, "") for r in inputs) or any(r in (None, "") for r in outputs)):
+            # SIMPL marks a symbol with an empty required pin incomplete (CF=1); which pins are
+            # optional isn't known yet, so every pin must be wired.
+            raise EditError(f"{ls.name}: wire every input and output (use the built-in signals 0 or 1 for constants)")
+
         # Resolve everything before changing anything, so errors leave no trace.
-        snapshot = [it if isinstance(it, str) else Record(lines=list(it.lines), closed=it.closed) for it in self.raw.items]
+        snapshot = self._snapshot()
         try:
             in_h = [self.signal_for(r, create_type=new_signal_type) for r in inputs]
             out_h = [self.signal_for(r, create_type=new_signal_type) for r in outputs]
-            if not ls.shares_outputs and not allow_second_driver:
-                driven = {sig for s in self.prog.symbols.values() if s.code != 55 for sig in s.outputs.values()}
+            if not allow_second_driver:
                 for sig in out_h:
-                    if sig is not None and (sig in driven or sig <= 3):
-                        raise EditError(f"signal {self.prog.signal_name(sig)!r} already has a driver")
+                    if sig is not None:
+                        self.check_can_drive(sig, ls)
             h = self._next_handle("Sm")
             hd = self.prog.header
             lines = simple_symbol_lines(
@@ -258,12 +263,242 @@ class Editor:
             self._insert_record(Record(lines=lines), "Sm", after_types=("Bw", "Bk"))
             self._append_child(parent, h)
         except Exception:
-            self.raw.items = snapshot
-            self._reload()
+            self._restore(snapshot)
             raise
         self._reload()
         self.log.add(f"added {ls.name} #{h} in folder #{parent}")
         return h
+
+    # ------------------------------------------------------------ shared rules and plumbing
+    def _snapshot(self) -> list:
+        return [it if isinstance(it, str) else Record(lines=list(it.lines), closed=it.closed) for it in self.raw.items]
+
+    def _restore(self, snapshot: list) -> None:
+        self.raw.items = snapshot
+        self._reload()
+
+    def check_can_drive(self, sig: int, driver: LibSymbol | None) -> None:
+        """Refuse an output that would give a digital signal a second driver.
+
+        The same rule as find_problems' LGCMCVT220, confirmed by SIMPL 4.32: built-ins can't
+        be driven; analog/serial signals and '//' placeholders may have several drivers;
+        symbols that share outputs (Buffer...) may drive a signal together.
+        """
+        if sig in set(self.prog.builtin_signals.values()):
+            raise EditError(f"the built-in signal {self.prog.signal_name(sig)!r} can't be driven")
+        sg = self.prog.signals.get(sig)
+        if sg is None or sg.type != "digital" or sg.name.startswith("//"):
+            return
+        drivers = [s for s in self.prog.symbols.values() if s.code != 55 and sig in s.outputs.values()]
+        if not drivers:
+            return
+        lib_of = (lambda c: self.lib.get(c)) if self.lib else (lambda c: None)
+        if driver is not None and driver.shares_outputs and all(
+            (ls := lib_of(s.code)) is not None and ls.shares_outputs for s in drivers
+        ):
+            return
+        raise EditError(
+            f"signal {sg.name!r} already has a driver (#{drivers[0].handle}); SIMPL would warn LGCMCVT220. "
+            "Only Buffers and similar symbols may share a digital signal."
+        )
+
+    def _symbol(self, ref: str | int, *, allow_folder: bool = False) -> Symbol:
+        s = self.prog.symbols[self.find_symbol(ref)]
+        if s.code == FOLDER_CODE and not allow_folder:
+            raise EditError(f"#{s.handle} is a folder; use the folder operations")
+        return s
+
+    @staticmethod
+    def _parse_pin(pin: str, letters: str) -> tuple[str, int]:
+        p = str(pin).strip().upper()
+        if len(p) < 2 or p[0] not in letters or not p[1:].isdigit() or int(p[1:]) < 1:
+            raise EditError(f"pin must look like {' or '.join(c + '1' for c in letters)} (got {pin!r})")
+        return p[0], int(p[1:])
+
+    @staticmethod
+    def _set_pin_key(rec: Record, letter: str, n: int, value: str | None) -> None:
+        """Set (or remove, with None) pin key I<n>/O<n> in SIMPL's key order."""
+        key = f"{letter}{n}"
+        if value is None:
+            rec.delete(key)
+            return
+        if key in rec:
+            rec.set(key, value)
+            return
+        # After the highest existing pin of the same letter below n, else after the count key.
+        anchor = {"I": "mI", "O": "tO"}[letter]
+        best = -1
+        for k in rec.keys():
+            if len(k) > 1 and k[0] == letter and k[1:].isdigit() and best < int(k[1:]) < n:
+                best = int(k[1:])
+        rec.set(key, value, after=f"{letter}{best}" if best > 0 else anchor)
+
+    def _rebuild_children(self, parent: int, children: list[int]) -> None:
+        """Rewrite a folder's C1..Cn and mC (no mC when it's empty, as SIMPL writes it)."""
+        rec = self.prog.symbols[parent].record
+        idx = next((i for i, (k, _) in enumerate(rec.lines) if k == "mC"), None)
+        rec.lines = [(k, v) for k, v in rec.lines
+                     if not (k and k[0] == "C" and k[1:].isdigit()) and k != "mC"]
+        if not children:
+            return
+        if idx is None:
+            anchor = next((i for i, (k, _) in reversed(list(enumerate(rec.lines)))
+                           if k and (k.startswith("Cmn") or k in ("OpF", "CF"))), len(rec.lines) - 1)
+            idx = anchor + 1
+        block = [("mC", str(len(children)))] + [(f"C{i}", str(c)) for i, c in enumerate(children, 1)]
+        rec.lines[idx:idx] = block
+
+    def _subtree(self, h: int) -> set[int]:
+        out, todo = set(), [h]
+        while todo:
+            x = todo.pop()
+            if x in out or x not in self.prog.symbols:
+                continue
+            out.add(x)
+            todo.extend(self.prog.symbols[x].children)
+        return out
+
+    # ------------------------------------------------------------ pin, parameter and comment edits
+    def connect(self, symbol: str | int, pin: str, signal: str | int | None,
+                new_signal_type: str = "digital") -> None:
+        """Wire an existing pin (I<n> or O<n>) to a signal, creating the signal if it's new.
+        signal None disconnects the pin."""
+        s = self._symbol(symbol)
+        letter, n = self._parse_pin(pin, "IO")
+        total = s.record.get("mI" if letter == "I" else "tO")
+        if not total or not total.isdigit() or n > int(total):
+            raise EditError(f"#{s.handle} has no pin {letter}{n} (it has {total or 0}); adding pins isn't supported yet")
+        snapshot = self._snapshot()
+        try:
+            if signal in (None, ""):
+                self._set_pin_key(s.record, letter, n, None)
+                self._reload()
+                self.log.add(f"disconnected #{s.handle} {letter}{n}")
+                return
+            sig = self.signal_for(signal, create_type=new_signal_type)
+            if letter == "O" and s.outputs.get(n) != sig:
+                self.check_can_drive(sig, self.lib.get(s.code) if self.lib else None)
+            self._set_pin_key(s.record, letter, n, str(sig))
+        except Exception:
+            self._restore(snapshot)
+            raise
+        self._reload()
+        self.log.add(f"connected #{s.handle} {letter}{n} to {self.prog.signal_name(sig)!r}")
+
+    def set_parameter(self, symbol: str | int, pin: str, value: str) -> None:
+        """Change an existing parameter P<n> (e.g. '5s', '50%', '10d')."""
+        s = self._symbol(symbol)
+        _, n = self._parse_pin(pin, "P")
+        if f"P{n}" not in s.record:
+            raise EditError(f"#{s.handle} has no parameter P{n} (it has {s.record.get('mP') or 0})")
+        if any(c in str(value) for c in "\r\n"):
+            raise EditError("a parameter value must be one line")
+        s.record.set(f"P{n}", str(value))
+        self._reload()
+        self.log.add(f"set #{s.handle} P{n} = {value!r}")
+
+    def set_comment(self, ref: str | int, text: str) -> None:
+        """Replace a symbol's whole comment. Line breaks become SIMPL's two-backslash breaks.
+        Empty text removes it. Folders are renamed with rename_folder instead."""
+        s = self._symbol(ref)
+        rec = s.record
+        if "\r" in text or "\\" in text:
+            raise EditError("comments can't contain backslashes or carriage returns")
+        encoded = "\\\\".join(line.rstrip() for line in text.split("\n")).strip()
+        rec.lines = [(k, v) for k, v in rec.lines if not (k and k.startswith("Cmn"))]
+        if encoded:
+            anchor = next((k for k in ("n1O", "n2I", "n1I", "CF") if k in rec), None)
+            rec.set("Cmn1", encoded, after=anchor)
+        self._reload()
+        self.log.add(f"set comment on #{s.handle}")
+
+    # ------------------------------------------------------------ folder and structure edits
+    def rename_folder(self, folder: str | int, new_name: str) -> None:
+        h = self.find_folder(folder)
+        s = self.prog.symbols[h]
+        if s.parent is None:
+            raise EditError("the Logic folder can't be renamed")
+        if not new_name or new_name != new_name.strip() or "\\" in new_name or any(c in new_name for c in "\r\n"):
+            raise EditError(f"bad folder name {new_name!r}: one line, no backslashes")
+        from ..analysis import comment_lines
+
+        for c in self.prog.symbols[s.parent].children:
+            o = self.prog.symbols.get(c)
+            if o is not None and c != h and o.code == FOLDER_CODE and self._folder_name(o).lower() == new_name.lower():
+                raise EditError(f"a folder named {new_name!r} is already there (#{c})")
+        old = self._folder_name(s)
+        lines = comment_lines(s)
+        lines = [new_name] + lines[1:]
+        rec = s.record
+        rec.lines = [(k, v) for k, v in rec.lines if not (k and k.startswith("Cmn"))]
+        anchor = next((k for k in reversed(rec.keys()) if k in ("OpF", "CF", "LogModDh", "PropF")), "PrH")
+        rec.set("Cmn1", "\\\\".join(lines), after=anchor)
+        self._reload()
+        self.log.add(f"renamed folder #{h} {old!r} -> {new_name!r}")
+
+    @staticmethod
+    def _folder_name(s: Symbol) -> str:
+        from ..analysis import display_name
+
+        return display_name(s)
+
+    def _check_movable(self, s: Symbol) -> None:
+        if s.parent is None or s.parent not in self.prog.symbols:
+            raise EditError(f"#{s.handle} is a top-level node and can't be moved or removed")
+        if s.device is not None:
+            raise EditError(f"#{s.handle} belongs to a device; device symbols can't be moved or removed yet")
+        if self.prog.symbols[s.parent].code != FOLDER_CODE:
+            raise EditError(f"#{s.handle} isn't in a Logic folder")
+
+    def remove_symbol(self, ref: str | int) -> list[str]:
+        """Remove a logic symbol, or an empty folder. Signals nothing uses any more are
+        removed too (SIMPL doesn't keep unused signals). Returns those signals' names."""
+        s = self._symbol(ref, allow_folder=True)
+        self._check_movable(s)
+        if s.code == FOLDER_CODE and s.children:
+            raise EditError(f"folder #{s.handle} isn't empty; move or remove what's inside first")
+        snapshot = self._snapshot()
+        try:
+            touched = set(s.inputs.values()) | set(s.outputs.values())
+            parent = s.parent
+            self._rebuild_children(parent, [c for c in self.prog.symbols[parent].children if c != s.handle])
+            self.raw.items = [it for it in self.raw.items if it is not s.record]
+            self._reload()
+            used = {h for o in self.prog.symbols.values() for h in list(o.inputs.values()) + list(o.outputs.values())}
+            builtin = set(self.prog.builtin_signals.values())
+            gone = [h for h in touched if h not in used and h not in builtin and h in self.prog.signals
+                    and self.prog.signals[h].record is not None]
+            names = [self.prog.signals[h].name for h in sorted(gone)]
+            drop = {id(self.prog.signals[h].record) for h in gone}
+            self.raw.items = [it for it in self.raw.items if id(it) not in drop]
+        except Exception:
+            self._restore(snapshot)
+            raise
+        self._reload()
+        self.log.add(f"removed #{s.handle}" + (f" and unused signals {names}" if names else ""))
+        return names
+
+    def move_symbol(self, ref: str | int, folder: str | int) -> None:
+        """Move a logic symbol or folder into another folder (to the end of it)."""
+        s = self._symbol(ref, allow_folder=True)
+        self._check_movable(s)
+        target = self.find_folder(folder)
+        if target in self._subtree(s.handle):
+            raise EditError("a folder can't be moved into itself")
+        if target == s.parent:
+            return
+        snapshot = self._snapshot()
+        try:
+            old = s.parent
+            self._rebuild_children(old, [c for c in self.prog.symbols[old].children if c != s.handle])
+            s.record.set("PrH", str(target))
+            self._reload()
+            self._append_child(target, s.handle)
+        except Exception:
+            self._restore(snapshot)
+            raise
+        self._reload()
+        self.log.add(f"moved #{s.handle} to folder #{target}")
 
     def _append_child(self, parent: int, child: int) -> None:
         rec = self.prog.symbols[parent].record
@@ -304,16 +539,6 @@ class Editor:
         self._reload()
         self.log.add(f"added folder {name!r} #{h} in #{par}")
         return h
-
-    def set_comment(self, ref: str | int, text: str) -> None:
-        h = self.find_symbol(ref)
-        rec = self.prog.symbols[h].record
-        if "\r" in text or "\n" in text:
-            raise EditError("comments must be one line")
-        anchor = next((k for k in ("n1O", "n2I", "n1I", "CF") if k in rec), None)
-        rec.set("Cmn1", text, after=anchor)
-        self._reload()
-        self.log.add(f"set comment on #{h}")
 
 
 def folder_lines(
