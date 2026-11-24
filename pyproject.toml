@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simpl-agent"
+dynamic = ["version"]
+description = "MCP tools for reading, checking and editing Crestron SIMPL Windows programs. Personal use."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+# M0 (format proof) needs only the standard library. The MCP SDK arrives in M1.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.setuptools.dynamic]
+version = { attr = "simpl_agent.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra -m 'not corpus'"
+markers = ["corpus: slow tests over the local SIMPL corpus (run with -m corpus)"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "tools"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]

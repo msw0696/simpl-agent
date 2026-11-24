@@ -1,0 +1,24 @@
+# SIMPL programs and Crestron files never go in the repo (client privacy,
+# Crestron data). Only synthetic files our own code generates are allowed.
+*.smw
+*.cmc
+*.umc
+*.usp
+*.ush
+*.clz
+*.vtp
+*.vtz
+*.lpz
+*.sig
+!tests/fixtures/synthetic/**
+
+# Backups and history written next to programs
+.simpl-agent/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
