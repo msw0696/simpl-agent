@@ -156,7 +156,7 @@ WARNING(LGCMCVT220) ** Signal "test_out" on symbol S-2 has a previously defined 
 WARNING(LGCMCVT102) ** Signal "test_a" has no driving source.
 NOTICE (LGCMCVT103) ** Signal "test_out" has no destination.
 ```
-- `S-2` is the AND, the second symbol in `Logic`. "S-n" seems to be the symbol's position in its folder, not its handle (#22).
+- `S-2` is the AND, the second symbol in `Logic`. **SIMPL numbers symbols by path** (confirmed in round 2): `S-2.3` is the 3rd symbol in the folder that is 2nd in `Logic`. It is not the handle. `analysis.simpl_number` computes it.
 - `check_program` will use the same codes and wording: LGCMCVT220 for a second driver, LGCMCVT102 for no source, LGCMCVT103 for no destination.
 
 **What SIMPL changes on re-save** (from the `00` control):
@@ -166,6 +166,18 @@ NOTICE (LGCMCVT103) ** Signal "test_out" has no destination.
 - `SavedBy` stayed 4.30 on the empty program but changed to 4.32 on the PRO3 demo. It may only change when SIMPL alters content.
 - **SIMPL can renumber handles on save.** Upgrading the older PRO3 demo (processor `ObjVer` 6 → 7) moved records and renumbered device handles (the `C*` lists changed) and symbol handles. It also dropped one `Db` record and moved a `Cm` record's settings.
   - **Handles are not stable across a SIMPL save.** After SIMPL saves, re-read the file before any further edit, and never replay old handles blindly. `reapply` must find symbols and signals again by name or position.
+
+### F12 round 2 (2026-11-24, `tools/make_f12_round2.py`)
+Each file started from the same empty CP4N program. **SIMPL printed exactly the messages `find_problems` predicted**, apart from the S-number in `24`.
+
+| Test | Result |
+|---|---|
+| `21` two Buffers drive one digital signal | No LGCMCVT220. **Buffers (SymJam=NonExclusive) may share an output.** |
+| `22` two Analog Initialize drive one analog signal | No LGCMCVT220. **Analog signals may have several drivers**, even from symbols that don't share outputs. |
+| `23` `//spare_out` goes nowhere, `//spare_in` has no source | Neither is reported. **`//` signals are exempt** from LGCMCVT102 and LGCMCVT103. |
+| `24` a second driver, 3rd symbol inside folder `Sub` (2nd in Logic) | SIMPL said **S-2.3**, where we predicted S-3. SIMPL numbers by path; this is now fixed. All other messages matched. |
+
+**SIMPL's re-saves of all four** differed from what we wrote only in version stamps. That includes the new folder record from `add_folder` and the Analog Initialize records.
 
 ## 8. Still to learn
 **From the F12 test set (`tools/make_f12_samples.py`):**

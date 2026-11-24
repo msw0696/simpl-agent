@@ -69,12 +69,38 @@ def folder_path(prog: Program, handle: int, lib: SymbolLibrary | None = None) ->
 
 
 def position_in_folder(prog: Program, handle: int) -> int | None:
-    """1-based position among the parent's children (SIMPL's 'S-n', inferred)."""
+    """1-based position among the parent's children."""
     s = prog.symbols.get(handle)
     if not s or s.parent is None or s.parent not in prog.symbols:
         return None
     kids = prog.symbols[s.parent].children
     return kids.index(handle) + 1 if handle in kids else None
+
+
+def simpl_number(prog: Program, handle: int) -> str | None:
+    """SIMPL's own symbol number, as its compiler prints it: 'S-2.3' is the 3rd symbol
+    in the folder that is 2nd in Logic. Confirmed by SIMPL 4.32 (F12 round 2, 2026-11-24).
+    None for symbols outside the Logic folder (devices, macro roots)."""
+    parts: list[int] = []
+    seen: set[int] = set()
+    h = handle
+    while True:
+        s = prog.symbols.get(h)
+        if s is None or h in seen:
+            return None
+        seen.add(h)
+        parent = prog.symbols.get(s.parent) if s.parent is not None else None
+        if parent is None:
+            return None
+        pos = position_in_folder(prog, h)
+        if pos is None:
+            return None
+        parts.append(pos)
+        if parent.parent is None:
+            if not (is_folder(parent) and (parent.name or "") == "Logic"):
+                return None
+            return "S-" + ".".join(str(p) for p in reversed(parts))
+        h = parent.handle
 
 
 def pin_label(ls: LibSymbol | None, symbol: Symbol, letter: str, n: int) -> str:
@@ -203,8 +229,7 @@ def find_problems(prog: Program, lib: SymbolLibrary | None) -> list[Problem]:
             if not all(shares(s) for s, _ in drv):
                 module = any(prog.symbols[s].code in MODULE_CODES for s, _ in drv)
                 for s, _ in drv[1:]:
-                    pos = position_in_folder(prog, s)
-                    where = f"S-{pos}" if pos else f"#{s}"
+                    where = simpl_number(prog, s) or f"#{s}"
                     out.append(Problem("warning", "LGCMCVT220",
                                        f'Signal "{sg.name}" on symbol {where} has a previously defined driving source.',
                                        signal=sg.name, symbols=[x for x, _ in drv], confirmed=not module))

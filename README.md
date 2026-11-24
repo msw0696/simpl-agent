@@ -111,7 +111,8 @@ The gate for everything else: can we change a `.smw` file without SIMPL noticing
 - `folder_tree`, `list_folder`, `show_symbol`, `find_signals` and `follow_signal` for navigating and tracing.
 - `find_problems` finds signals driven twice, never driven or never used, duplicate names, and symbols that aren't fully wired. It uses SIMPL's own message codes.
 - Macro files (`.umc`/`.cmc`) are handled: a macro's arguments count as its own inputs and outputs.
-- **Still to confirm against SIMPL:** the exemptions for Buffers, analog and serial signals, and `//` placeholder signals; SIMPL+ and macro cases; and whether our `S-n` position numbers match SIMPL's.
+- **Checked against SIMPL 4.32:** ten hand-compiled test files, where `find_problems` printed the same messages SIMPL did. That covers Buffers sharing an output, several analog drivers, `//` placeholder signals, and SIMPL's symbol numbers (`S-2.3`).
+- **Still to confirm:** cases involving SIMPL+ modules or macros, which are marked unconfirmed.
 
 ### M3: Edit and safety ⏭
 

@@ -19,7 +19,7 @@ Tools for Crestron SIMPL Windows. At milestone M2 they **read and check** progra
 1. **Find the program.** Call `simpl_agent_status`; it shows what SIMPL Windows has open, and whether it has unsaved changes. If that isn't the file the user means, ask for the full path.
 2. **Get the overview.** Call `describe_program` for the processor and counts, then `folder_tree` for the layout.
 3. **Look closer** with the tool that fits:
-   - `list_folder`: what's in a folder, in SIMPL's order (`S-1`, `S-2`… within the folder; that these match SIMPL's own S-numbers is inferred).
+   - `list_folder`: what's in a folder, in SIMPL's order, with SIMPL's own symbol numbers (`S-2.3` = 3rd symbol in the folder that is 2nd in Logic; the same numbers SIMPL's compiler prints).
    - `show_symbol`: one symbol's pins, with the library's pin names, its signals and its parameters.
    - `find_signals`: signals by name, with how many outputs drive each and how many inputs use it.
    - `follow_signal`: where a signal comes from and where it goes, across folders. Chain calls to trace logic step by step.
@@ -27,7 +27,7 @@ Tools for Crestron SIMPL Windows. At milestone M2 they **read and check** progra
 4. **Look up symbols** with `find_library_symbols` and `library_symbol_details` for real pin names and rules.
    - Names ending in `#` repeat (`i1`, `i2`…).
    - Names in `[brackets]` seem to be optional pins. That's inferred, so say so.
-5. **Answer plainly.** Lead with the answer. Refer to symbols by folder path and name, e.g. "Logic\Room A: One Shot", and give the handle (`#33`) and position as well when it helps.
+5. **Answer plainly.** Lead with the answer. Refer to symbols the way SIMPL does: S-number, folder path and name, e.g. "S-2.3 (Logic\Room A: One Shot)". Give the handle (`#33`) as well when it helps.
 6. **If the user saves in SIMPL,** re-read before relying on earlier results. SIMPL can renumber symbols when it saves, and the `revision` will differ, so never reuse old handles.
 
 ## Reading find_problems
@@ -37,7 +37,7 @@ Tools for Crestron SIMPL Windows. At milestone M2 they **read and check** progra
   - `LGCMCVT220`, warning: a digital signal has a second driving source.
 - **Unconfirmed results:** entries marked `unconfirmed` involve SIMPL+ modules or macros, and SIMPL hasn't been seen to report those yet. Results on macro files (`.umc`/`.cmc`) haven't been checked against SIMPL either. Say so.
 - **SIMPL Agent's own checks** start with `SA-`: duplicate names, broken references, and symbols SIMPL marked incomplete.
-- **Exemptions** (from the corpus, not yet confirmed by a SIMPL compile):
+- **Exemptions** (all confirmed by SIMPL 4.32 compiles):
   - The built-in signals `0`, `1` and `Local`, and names starting with `//`, are never reported.
   - Buffers, panels and similar symbols may share an output signal.
   - Analog and serial signals may have several drivers.

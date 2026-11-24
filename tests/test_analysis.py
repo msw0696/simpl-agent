@@ -47,7 +47,7 @@ def test_second_driver_warns_unless_shared(tiny: bytes) -> None:
     ed.add_symbol(3, "Logic", inputs=["room_enable", "room_enable"], outputs=["room_out"], allow_second_driver=True)
     probs = [p for p in an.find_problems(ed.prog, lib()) if p.code == "LGCMCVT220"]
     assert len(probs) == 1 and probs[0].signal == "room_out" and probs[0].confirmed
-    assert "S-3" in probs[0].message  # third symbol in Logic
+    assert "S-3" in probs[0].message  # third symbol in Logic: SIMPL's number S-3
 
     ed2 = Editor(rawfile.parse(tiny), lib(), verified_codes={3, 20})
     ed2.add_symbol(20, "Logic", inputs=["room_enable", "room_level"], outputs=["room_out"])
@@ -104,6 +104,21 @@ def test_folder_path_and_position(tiny: bytes) -> None:
     prog = load(rawfile.parse(tiny))
     assert an.folder_path(prog, 6) == "Logic"
     assert an.position_in_folder(prog, 6) == 2
+    assert an.simpl_number(prog, 6) == "S-2"
+    assert an.simpl_number(prog, 4) is None  # Logic itself has no number
+
+
+def test_simpl_number_in_subfolder(tiny: bytes) -> None:
+    # SIMPL numbers symbols by path, like S-2.3 in F12 round 2's test24.
+    from test_edit import fake_library
+
+    ed = Editor(rawfile.parse(tiny), fake_library(), verified_codes={3})
+    f = ed.add_folder("Sub")  # Logic: #5 S-1, #6 S-2, folder S-3
+    a = ed.add_symbol(3, "Sub", inputs=["room_enable", "room_out"], outputs=["x1"])
+    b = ed.add_symbol(3, "Sub", inputs=["room_enable", "room_out"], outputs=["x2"])
+    assert an.simpl_number(ed.prog, f) == "S-3"
+    assert an.simpl_number(ed.prog, a) == "S-3.1"
+    assert an.simpl_number(ed.prog, b) == "S-3.2"
 
 
 # ---------------------------------------------------------------- ground truth
@@ -124,6 +139,45 @@ SIMPL_SAID = {
     "10-control-real/demo10.smw": (0, 0),
     "11-rename-real/demo11.smw": (0, 0),
 }
+
+# F12 round 2 (2026-11-24): exact messages SIMPL 4.32 printed, as (code, signal, symbol number).
+ROUND2_SAID = {
+    "21-two-buffers/test21.smw": [("LGCMCVT102", "test_en1", None), ("LGCMCVT102", "test_a", None),
+                                  ("LGCMCVT102", "test_en2", None), ("LGCMCVT102", "test_b", None),
+                                  ("LGCMCVT103", "test_out", None)],
+    "22-two-analog/test22.smw": [("LGCMCVT102", "test_t1", None), ("LGCMCVT102", "test_t2", None),
+                                 ("LGCMCVT103", "test_level", None)],
+    "23-placeholders/test23.smw": [("LGCMCVT102", "test_a", None), ("LGCMCVT102", "test_b", None),
+                                   ("LGCMCVT103", "test_and", None)],
+    "24-subfolder/test24.smw": [("LGCMCVT220", "test_out", "S-2.3"),
+                                ("LGCMCVT102", "test_a", None), ("LGCMCVT102", "test_b", None),
+                                ("LGCMCVT102", "test_c", None), ("LGCMCVT102", "test_d", None),
+                                ("LGCMCVT103", "test_out", None), ("LGCMCVT103", "test_x", None),
+                                ("LGCMCVT103", "test_y", None)],
+}
+
+
+def _round2_dir() -> Path | None:
+    for c in (os.environ.get("SIMPL_F12_ROUND2_DIR"), Path.home() / "simpl-f12-round2",
+              Path.home() / "OneDrive" / "Documents" / "SIMPL" / "f12-round2"):
+        if c and Path(c, "24-subfolder").is_dir():
+            return Path(c)
+    return None
+
+
+@pytest.mark.corpus
+@pytest.mark.skipif(_round2_dir() is None, reason="F12 round 2 set not on this PC")
+@pytest.mark.parametrize("rel,expected", sorted(ROUND2_SAID.items()))
+def test_matches_simpl_messages_round2(rel: str, expected: list) -> None:
+    """Same messages as SIMPL printed, including its S-number (order aside)."""
+    from simpl_agent.catalog.index import load_index
+
+    prog = load(rawfile.read(_round2_dir() / rel))
+    got = []
+    for p in an.find_problems(prog, load_index().library):
+        num = p.message.split(" on symbol ")[1].split(" ")[0] if " on symbol " in p.message else None
+        got.append((p.code, p.signal, num))
+    assert sorted(got, key=str) == sorted(expected, key=str)
 
 
 @pytest.mark.corpus

@@ -417,11 +417,11 @@ class Tools:
         p, rev, prog, lib = self._load(path)
         h = self._folder_ref(prog, folder)
         rows = []
-        for pos, c in enumerate(prog.symbols[h].children, 1):
+        for c in prog.symbols[h].children:
             s = prog.symbols.get(c)
             if s is None:
                 continue
-            row: dict[str, Any] = {"symbol": f"#{c}", "position_in_folder": f"S-{pos}", "name": an.display_name(s, lib),
+            row: dict[str, Any] = {"symbol": f"#{c}", "simpl_number": an.simpl_number(prog, c), "name": an.display_name(s, lib),
                                    "is_folder": an.is_folder(s)}
             if s.comment and not an.is_folder(s):
                 row["comment"] = "\n".join(an.comment_lines(s))
@@ -449,11 +449,10 @@ class Tools:
                     for n in range(1, n_max + 1)]
 
         comments = an.comment_lines(s)
-        pos = an.position_in_folder(prog, h)
         return {
             "path": str(p), "revision": rev, "symbol": f"#{h}", "name": an.display_name(s, lib),
             "library": {"code": s.code, "name": ls.name if ls else None},
-            "folder": an.folder_path(prog, h, lib), "position_in_folder": f"S-{pos}" if pos else None,
+            "folder": an.folder_path(prog, h, lib), "simpl_number": an.simpl_number(prog, h),
             "is_folder": an.is_folder(s), "comment": "\n".join(comments) or None,
             "complete": {"2": True, "1": False}.get(s.record.get("CF") or "", None),
             "device": f"#{s.device}" if s.device is not None else None,
@@ -515,7 +514,7 @@ class Tools:
         shown, page = self._page([x.as_dict() for x in probs], 0, limit, cap=2000)
         out = {"path": str(p), "revision": rev, "counts": counts, "problems": shown, "page": page,
                "note": "Codes LGCMCVT102/103/220 follow SIMPL 4.32's compiler messages (checked on a small "
-                       "set of compiled files); SA-* are SIMPL Agent's own. S-n positions are inferred. "
+                       "set of compiled files); SA-* are SIMPL Agent's own. "
                        "SIMPL's compile (F12) is the final word."}
         if prog.kind == "CresMacro":
             out["macro_note"] = ("This is a macro. Its arguments are treated as its inputs and outputs; "
@@ -575,7 +574,7 @@ def create_server(tools: Tools | None = None) -> Any:
         return await _run("folder_tree", path=path, max_depth=max_depth, limit=limit)
 
     @server.tool(name="list_folder", description="The symbols in one folder, in SIMPL's order (position "
-                 "S-n within the folder; that this matches SIMPL's own S-numbers is inferred), with handle, "
+                 "with SIMPL's own S-number, e.g. S-2.3, as its compiler prints it), with handle, "
                  "name, comment and pin counts. folder: 'Logic' (default), a folder "
                  "handle like '#25', or a folder name. Paged with offset/limit.")
     async def list_folder(path: str, folder: str = "Logic", offset: int = 0, limit: int = 100) -> dict[str, Any]:
