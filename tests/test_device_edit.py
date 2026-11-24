@@ -217,3 +217,23 @@ def test_adding_a_device_keeps_every_public_program_valid(libs) -> None:
         if new:
             bad.append((f.name, sorted(new)[:2]))
     assert tried >= 10 and not bad, (tried, bad[:5])
+
+
+def test_cards_go_into_a_frames_slots(libs) -> None:
+    """A DM input card in a DM-MD8x8: no SlC, a Db record, symbol under the frame, Name parameter set."""
+    ed = editor(libs)
+    ed.add_device(libs[1], "DM-MD8x8", "10")
+    frame = next(d for d in ed.prog.devices.values() if d.name == "DM-MD8x8")
+    ed.add_device(libs[1], "DMC-4KZ-C", 1, network=f"#{frame.handles[0]}")
+    prog = ed.prog
+    assert structural_problems(prog) == set()
+    card = next(d for d in prog.devices.values() if d.name == "DMC-4KZ-C")
+    assert card.address == "01" and card.record.get("SlC") is None and card.record.get("DbH") is not None
+    sym = prog.symbols[card.symbol]
+    assert sym.parent == frame.symbol and sym.record.get("P1") == "DMC-4KZ-C"
+    with pytest.raises(EditError, match="already used"):
+        ed.add_device(libs[1], "DMC-4KZ-C", "01", network=f"#{frame.handles[0]}")
+    with pytest.raises(EditError, match="isn't supported in a slot yet"):
+        ed.add_device(libs[1], "DMCO-22", 17, network=f"#{frame.handles[0]}")
+    with pytest.raises(EditError, match="give network"):
+        ed.add_device(libs[1], "DMC-4KZ-C", 2)

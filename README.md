@@ -146,13 +146,14 @@ These are built into the tools and the skill:
 - **`device_tree`** and **`free_ids`** read the device tree and free IP IDs and Cresnet IDs.
 - **`add_device`** places a device at a free IP ID (4-Series, 3-Series, MC3 Ethernet) or Cresnet ID:
   - **What it writes, as SIMPL does:** the device, its model record and default IP, and its logic symbol under the network in ID order. Free IDs stay in one record.
-  - **Frames:** a device with its own slots (DM frames, NVX endpoints, ST-IO) is built with every slot and every device SIMPL puts inside it, numbered the way SIMPL numbers them. Card slots stay empty.
-  - **Which devices:** any whose pins are all optional and whose parameters have known defaults (touch panels, XPanels, EISCs, DM frames, NVX and many more). Others are refused with the reason.
+  - **Frames:** a device with its own slots (DM frames, NVX endpoints, ST-IO) is built with every slot and every device SIMPL puts inside it, numbered the way SIMPL numbers them.
+  - **Cards:** cards go into a frame's slots (`network` = the frame, `address` = the slot number), for card types SIMPL writes consistently: DM input cards, DM endpoints, HDBT receivers and similar.
+  - **Which devices:** any whose pins are all optional and whose parameters have known defaults (touch panels, XPanels, EISCs, DM frames and endpoints, NVX and many more). Others are refused with the reason.
 - **Proof:**
   - It rebuilds SIMPL 4.32's own saves of a TSW-1070 and an EISC byte for byte, and SIMPL's re-saves of several devices added by SIMPL Agent.
-  - `tools/prove_devices.py` and `tools/prove_frames.py` rebuild every device and frame in the 380 public programs from today's libraries. 719 device types match; 47 frames rebuild identically.
-  - Automatic compiles: 15 device types in one program, then a DM-MD8x8, DM-NVX-36x and ST-IO together, all with 0 errors, 0 warnings and 0 notices.
-- **Next:** putting cards and drivers into slots (DM input and output cards, COM drivers), devices with required pins, and device parameters.
+  - `tools/prove_devices.py` and `tools/prove_frames.py` rebuild every device and frame in the 380 public programs from today's libraries. 719 device types match; 47 frames rebuild identically; 238 of 239 cards in slots rebuild identically.
+  - Automatic compiles: 15 device types in one program; a DM-MD8x8, DM-NVX-36x and ST-IO together; a DM-MD8x8 with two input cards plus a DM-TX-201-C. All 0 errors, 0 warnings and 0 notices.
+- **Next:** DM output cards and COM/IR drivers, devices with required pins, and device parameters without defaults (e.g. a TCP/IP Client's port).
 
 ### Later
 
@@ -201,7 +202,7 @@ Optional environment variables:
 ## Development
 
 ```
-.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 160 tests (corpus tests need the local corpus)
+.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 161 tests (corpus tests need the local corpus)
 .venv\Scripts\python -m pytest                             # fast tests only
 .venv\Scripts\python -m ruff check .
 python -I tools/fetch_github_corpus.py    # download public sample programs (outside the repo)
@@ -222,7 +223,7 @@ Some device tests compare against SIMPL's own saves. Those files are real SIMPL 
 | `src/simpl_agent/edit_tools.py`, `history.py` | `apply_edits`, the write gate, history, undo and restore |
 | `src/simpl_agent/compile.py` | `compile_program` |
 | `src/simpl_agent/server.py` | The MCP server and audit log |
-| `tools/` | Corpus download, format measurements, device proofs, SIMPL test-file builders, compile task setup |
+| `tools/` | Corpus download, format measurements, device proofs and slot rules (`build_slot_rules.py`), SIMPL test-file builders, compile task setup |
 | `docs/format.md` | Everything measured about the file format, and every SIMPL 4.32 result |
 
 ## Licence

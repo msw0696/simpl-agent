@@ -47,6 +47,33 @@ NOT_USED = {"Not_Used", "NotUsed"}
 ADDRESS_RE = re.compile(r"^(?:0x)?([0-9A-Fa-f]{1,2})$")
 LISTS = ("", "List2", "List3")
 PARAM_DEFAULTS = {"PermanentStringSize": "255d"}
+# A device symbol's "Name" parameter starts as the device's own name (17 of 17 corpus devices
+# not renamed since; the 52 others were renamed by users, the parameter keeping the original).
+NAME_PARAM = "Name"
+
+
+def _slot_device_rules() -> dict[int, dict]:
+    """How SIMPL writes a device a user puts into a slot, per device code (tools/build_slot_rules.py)."""
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "catalog" / "slot_device_rules.json"
+    if not path.exists():
+        return {}
+    return {int(c): r for c, r in json.loads(path.read_text("utf-8"))["codes"].items()}
+
+
+SLOT_DEVICE_RULES = _slot_device_rules()
+
+
+def address_for_slot(address: str | int, slot_info: dict) -> str:
+    """The address text SIMPL uses in a slot of this type: hex IDs, else decimal positions."""
+    if slot_info.get("AddressFormat") == "HEX":
+        return normalise_address(address)
+    text = str(address).strip()
+    if not text.isdigit() or not 0 < int(text) < 10000:
+        raise ValueError(f"bad slot number {address!r}: give a number such as 1 or '01'")
+    return f"{int(text):02d}"
 
 
 def normalise_address(address: str | int) -> str:
@@ -91,7 +118,7 @@ def symbol_shape_problem(ls: LibSymbol) -> str | None:
             return f"its symbol has {k}, which isn't proven for devices"
     n = int(f.get("NumFixedParams") or 0)
     for i in range(1, n + 1):
-        if f.get(f"ParamCue{i}") not in PARAM_DEFAULTS:
+        if f.get(f"ParamCue{i}") not in PARAM_DEFAULTS and f.get(f"ParamCue{i}") != NAME_PARAM:
             return f"its symbol's parameter {f.get(f'ParamCue{i}')!r} has no known default"
     return None
 
@@ -252,7 +279,8 @@ def device_symbol_record(*, handle: int, ls: LibSymbol, smvr: str, device: int, 
     n = int(f.get("NumFixedParams") or 0)
     if n:
         lines.append(("mP", str(n)))
-        lines += [(f"P{i}", PARAM_DEFAULTS[f[f"ParamCue{i}"]]) for i in range(1, n + 1)]
+        lines += [(f"P{i}", comment if f[f"ParamCue{i}"] == NAME_PARAM else PARAM_DEFAULTS[f[f"ParamCue{i}"]])
+                  for i in range(1, n + 1)]
     return lines
 
 
@@ -311,38 +339,53 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
     dd = find_device_def(devlib, device)
     if dd.symbol_code is None:
         raise EditError(f"{dd.name} has no logic symbol of its own; it's part of another device")
-    try:
-        addr = normalise_address(address)
-    except ValueError as e:
-        raise EditError(str(e)) from None
-
-    # The free slot holding that address, on a network whose slot type the device may occupy.
-    slot_types = [s for s in dd.occupies if s in PROVEN_SLOTS]
-    if not slot_types:
-        raise EditError(f"{dd.name} doesn't go on a supported network (Ethernet IP ID or Cresnet ID); "
-                        f"it occupies {dd.occupies[:6]}")
+    # Where it can go: an ID on a network, or (with network naming a frame) a slot of that frame.
+    net_types = [t for t in dd.occupies if t in PROVEN_SLOTS]
+    rule = SLOT_DEVICE_RULES.get(dd.code)
+    other_types = [t for t in dd.occupies if t not in PROVEN_SLOTS]
+    if not net_types and not other_types:
+        raise EditError(f"{dd.name} doesn't occupy any slot type")
     candidates = []
     for c in _unique_devices(ed):
         if c.record.get("DvF") == "Sl":
             continue
         if network is not None and str(network).strip().lower() not in {f"#{c.handles[0]}", (c.name or "").lower()}:
             continue
-        for h in c.children:
+        for h in dict.fromkeys(c.children):
             k = ed.prog.devices.get(h)
-            if k is None or k.record.get("DvF") != "Sl" or k.name not in slot_types:
+            if k is None or k.record.get("DvF") != "Sl" or k.name not in dd.occupies:
                 continue
+            on_network = k.name in PROVEN_SLOTS
+            if not on_network and network is None:
+                continue  # slots inside a frame are only used when the caller names the frame
+            try:
+                a = address_for_slot(address, devlib.slots.get(k.name) or {})
+            except ValueError as e:
+                raise EditError(str(e)) from None
             addrs = (k.address or "").split(",")
-            if addr in addrs:
-                candidates.append((c, k, addrs))
+            if a in addrs:
+                candidates.append((c, k, addrs, a, on_network))
                 break
     if not candidates:
-        raise EditError(f"no {'/'.join(slot_types)} slot at address {addr}; check free_ids")
+        types = "/".join(net_types) if network is None else "/".join(dd.occupies[:4])
+        raise EditError(f"no {types} slot at address {address}" + (f" in {network}" if network else "")
+                        + "; check free_ids or device_tree"
+                        + ("" if net_types or network is not None else
+                           f". {dd.name} goes in a frame's slot: give network (the frame, e.g. '#589')"))
     if len(candidates) > 1:
-        raise EditError(f"address {addr} exists on {len(candidates)} networks; give network")
-    container, slot, addrs = candidates[0]
+        raise EditError(f"address {address} exists on {len(candidates)} networks; give network")
+    container, slot, addrs, addr, on_network = candidates[0]
     if slot.children:
         used = ed.prog.devices.get(slot.children[0])
         raise EditError(f"address {addr} is already used by {used.name if used else '?'}")
+    if on_network:
+        slot_code, with_db = None, True
+    elif rule is None:
+        raise EditError(f"{dd.name} isn't supported in a slot yet: the public programs don't show how SIMPL "
+                        "writes it consistently")
+    else:
+        slot_code = slot.record.get("SlC") if rule["slc"] else None
+        with_db = bool(rule["db"])
     if container.symbol is None or container.symbol not in ed.prog.symbols:
         raise EditError(f"network {container.name} has no logic symbol to put the device under")
 
@@ -387,17 +430,18 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
 
         # 2. The device and everything SIMPL puts inside it, numbered depth first.
         sm_h = ed._next_handle("Sm")
-        db_h = ed._next_handle("Db")
-        et_h = ed._next_handle("Et") if dd.fields.get("DefaultIP") else None
+        db_h = ed._next_handle("Db") if with_db else None
+        et_h = ed._next_handle("Et") if dd.fields.get("DefaultIP") and on_network else None
         b = _Build(ed, devlib, dvvr, smvr, sm_h)
-        b.device(dd, handle=dev_h, parent=hs[i], address=addr, slot_code=None, sym_parent=container.symbol,
+        b.device(dd, handle=dev_h, parent=hs[i], address=addr, slot_code=slot_code, sym_parent=container.symbol,
                  db=db_h, et=et_h)
         for lines in b.dv:
             _insert_dv_sorted(ed, Record(lines=lines))
 
         # 3. Companions: Db (and Et when the device has a default IP).
-        ed._insert_record(Record(lines=[("ObjTp", "Db"), ("H", str(db_h)), ("DvH", str(dev_h)), ("Whc", "3"),
-                                        ("Mnf", "Crestron"), ("Mdl", dd.name)]), "Db", after_types=("Dv", "Cm"))
+        if db_h is not None:
+            ed._insert_record(Record(lines=[("ObjTp", "Db"), ("H", str(db_h)), ("DvH", str(dev_h)), ("Whc", "3"),
+                                            ("Mnf", "Crestron"), ("Mdl", dd.name)]), "Db", after_types=("Dv", "Cm"))
         if et_h is not None:
             ed._insert_record(Record(lines=[("ObjTp", "Et"), ("H", str(et_h)), ("DvH", str(dev_h)),
                                             ("IPM", "255.255.255.0"), ("IPA", dd.fields["DefaultIP"])]),

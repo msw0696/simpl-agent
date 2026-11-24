@@ -1,0 +1,215 @@
+{
+ "note": "How SIMPL writes a device a user puts into a slot; measured by tools/build_slot_rules.py",
+ "codes": {
+  "125": {
+   "slc": true,
+   "db": false,
+   "seen": 12
+  },
+  "200": {
+   "slc": false,
+   "db": true,
+   "seen": 16
+  },
+  "270": {
+   "slc": false,
+   "db": true,
+   "seen": 2
+  },
+  "1351": {
+   "slc": false,
+   "db": true,
+   "seen": 16
+  },
+  "1399": {
+   "slc": false,
+   "db": true,
+   "seen": 4
+  },
+  "1580": {
+   "slc": false,
+   "db": false,
+   "seen": 4
+  },
+  "1756": {
+   "slc": true,
+   "db": false,
+   "seen": 2
+  },
+  "1897": {
+   "slc": false,
+   "db": true,
+   "seen": 2
+  },
+  "1939": {
+   "slc": false,
+   "db": true,
+   "seen": 2
+  },
+  "2141": {
+   "slc": false,
+   "db": true,
+   "seen": 2
+  },
+  "2566": {
+   "slc": false,
+   "db": true,
+   "seen": 2
+  },
+  "2836": {
+   "slc": false,
+   "db": true,
+   "seen": 8
+  },
+  "3185": {
+   "slc": true,
+   "db": false,
+   "seen": 2
+  },
+  "3186": {
+   "slc": true,
+   "db": false,
+   "seen": 4
+  },
+  "3201": {
+   "slc": false,
+   "db": false,
+   "seen": 2
+  },
+  "3229": {
+   "slc": false,
+   "db": true,
+   "seen": 2
+  },
+  "3719": {
+   "slc": false,
+   "db": false,
+   "seen": 2
+  },
+  "3823": {
+   "slc": false,
+   "db": true,
+   "seen": 5
+  },
+  "3846": {
+   "slc": false,
+   "db": true,
+   "seen": 4
+  },
+  "4202": {
+   "slc": false,
+   "db": true,
+   "seen": 3
+  },
+  "4242": {
+   "slc": false,
+   "db": true,
+   "seen": 11
+  },
+  "4828": {
+   "slc": false,
+   "db": true,
+   "seen": 2
+  },
+  "4838": {
+   "slc": false,
+   "db": false,
+   "seen": 2
+  },
+  "4946": {
+   "slc": false,
+   "db": true,
+   "seen": 2
+  },
+  "5141": {
+   "slc": false,
+   "db": true,
+   "seen": 2
+  },
+  "5572": {
+   "slc": false,
+   "db": true,
+   "seen": 13
+  },
+  "5795": {
+   "slc": false,
+   "db": true,
+   "seen": 2
+  },
+  "5857": {
+   "slc": false,
+   "db": true,
+   "seen": 2
+  },
+  "5868": {
+   "slc": false,
+   "db": true,
+   "seen": 2
+  },
+  "5915": {
+   "slc": false,
+   "db": true,
+   "seen": 6
+  },
+  "5996": {
+   "slc": false,
+   "db": true,
+   "seen": 9
+  },
+  "6002": {
+   "slc": false,
+   "db": true,
+   "seen": 2
+  },
+  "6010": {
+   "slc": false,
+   "db": true,
+   "seen": 2
+  },
+  "6050": {
+   "slc": false,
+   "db": true,
+   "seen": 6
+  },
+  "6317": {
+   "slc": false,
+   "db": true,
+   "seen": 2
+  },
+  "6395": {
+   "slc": false,
+   "db": true,
+   "seen": 3
+  },
+  "6411": {
+   "slc": false,
+   "db": true,
+   "seen": 3
+  },
+  "6435": {
+   "slc": false,
+   "db": true,
+   "seen": 2
+  },
+  "8890": {
+   "slc": false,
+   "db": true,
+   "seen": 9
+  },
+  "15000": {
+   "slc": false,
+   "db": true,
+   "seen": 2
+  },
+  "16491": {
+   "slc": false,
+   "db": true,
+   "seen": 4
+  },
+  "17037": {
+   "slc": false,
+   "db": true,
+   "seen": 2
+  }
+ }
+}
