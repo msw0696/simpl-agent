@@ -67,10 +67,10 @@ def main() -> int:
     copy_job(hue_src, out / "41-hue-bridge")
     p = out / "41-hue-bridge" / "PhilipsHueTest.smw"
     ed = Editor(rawfile.read(p), lib, program_path=p, installed_modules=INSTALLED_MODULES)
-    ed.allow_pin_groups = True  # the experiment: no GrpSt keys
     ed.add_folder("Second Bridge")
     ed.add_module("Philips Hue Bridge v2.0.0.umc", "Second Bridge",
-                  connect={"Link": "bridge2_link", "Is_Linked": "bridge2_linked", "Status": "bridge2_status$"},
+                  connect={"Link": "bridge2_link", "Get_Lights": "bridge2_get_lights", "Is_Linked": "bridge2_linked",
+                           "Status": "bridge2_status$"},
                   parameters=["192.168.2.51", "crestron"], comment="Placed by SIMPL Agent (round 4)",
                   new_signal_type="digital")
     save.write(ed.raw, p, make_backup=False)

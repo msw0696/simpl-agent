@@ -111,12 +111,30 @@ def test_add_macro_by_pin_names(tmp_path: Path) -> None:
     h = ed.add_module("Fake Camera.umc", "Logic", connect={"Power_On": "cam_power", "Level": "cam_level"},
                       parameters=["7"], comment="Room camera")
     s = ed.prog.symbols[h]
+    reserved = ed.find_signal("//__digital_reserved__")
     assert s.record.lines == [
         ("ObjTp", "Sm"), ("H", "7"), ("SmC", "155"), ("Nm", "Fake Camera.umc"), ("ObjVer", "1"), ("PrH", "4"),
         ("CF", "2"), ("n1I", "3"), ("n1O", "2"), ("Cmn1", "Room camera"), ("mI", "3"), ("I1", str(s.inputs[1])),
-        ("mO", "2"), ("tO", "2"), ("O2", str(s.outputs[2])), ("mP", "1"), ("P1", "7"),
+        ("I3", str(reserved)), ("mO", "2"), ("tO", "2"), ("O1", str(reserved)), ("O2", str(s.outputs[2])),
+        ("mP", "1"), ("P1", "7"),
     ]
     assert ed.prog.signals[s.outputs[2]].type == "analog"  # new signal typed from the pin
+    # Unused required pins (Preset_1, Power_Fb) got SIMPL's placeholder; the [~UNUSED~] slot stays empty.
+    assert 2 not in s.inputs
+
+
+def test_required_pin_of_any_type_must_be_given(tmp_path: Path) -> None:
+    import pytest
+
+    from simpl_agent.smw.edit import EditError
+
+    ed, p = module_editor(tmp_path)
+    umc = UMC_FULL.replace("InputSigType3=Digital\r\n", "InputSigType3=Digital|Analog|Serial\r\n")
+    (tmp_path / "Fake Camera.umc").write_bytes(umc.encode("latin-1"))
+    with pytest.raises(EditError, match="Preset_1.*any signal"):
+        ed.add_module("Fake Camera.umc", "Logic", connect={"Power_On": "cam_power"}, parameters=["7"])
+    ed.add_module("Fake Camera.umc", "Logic", connect={"Power_On": "cam_power", "Preset_1": "cam_preset"},
+                  parameters=["7"], new_signal_type="digital")
 
 
 def test_add_splus_lists_and_placeholders(tmp_path: Path) -> None:

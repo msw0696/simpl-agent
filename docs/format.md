@@ -228,6 +228,33 @@ The program is `bernasbtcnj/crestron` `gpc/dmps3_4k_150_standard.smw`: SIMPL 4.3
 - **A pin name can end in `#`.** Module files can have ordinary pin names like that, so a pin's own name must win over the "`#` repeats" rule.
 - **User macros (`.umc`)** carry the signature `Sgntr=UserMacro`; Crestron's `.cmc` macros carry `CresMacro`.
 
+### Modules: macros and SIMPL+ (2026-11-24)
+How SIMPL 4.3x stores a placed module, measured on every placed module with its definition available (299 macros, 377 SIMPL+), then proven by rebuilding them byte-for-byte (`test_placed_modules_rebuild_exactly`):
+
+- **Key order and stamps:**
+  - Key order is `ObjTp H SmC Nm ObjVer PrH CF [n1I] [n2I] [n1O] [n2O] [Cmn…] [mI I…] [mO tO O…] [mP P…]`.
+  - There's **no `SmVr`**.
+  - `Nm` is the module file name.
+  - `CF=2` always, even with empty pins.
+- **Macros (`.umc`, `.cmc`):** the counts come from the definition's `NumFixedInputs`, `NumFixedOutputs` and `NumFixedParams`. The definition's pin-name lists can be longer, padded with placeholders like `o1`/`p1`.
+- **SIMPL+ (`.ush` header):** each list's size is chosen within `MinVariable…` to `MaxVariable…` (the minimum by default, in 289 of 367). Parameters are `NumFixedParams` + `MinVariableParams`. **`n2O` is never stored**, although list-2 outputs count in `mO`/`tO`. Untyped first-list pins are digital (1,698 of 1,698).
+- **Which pins must be wired:**
+  - every pin with a **plain name** is wired, in 9,963 of 9,963 cases;
+  - `[bracketed]` pins are optional;
+  - `[~UNUSED~]` slots are always empty.
+
+  Unused required pins carry SIMPL's placeholders `//__digital_reserved__`, `//__analog_reserved__` and `//__serial_reserved__` (one each, shared). **A module with an unwired required pin stops the compile** ("Incomplete Symbols"; seen in round 4).
+- **Parameters:** placeholder slots (`[~UNUSED~]`, `[Reference Name]`) are always empty, and real parameters are always set (2,151 against 1).
+- **Pin groups:** modules whose pins are grouped (`[~BeginGroup~]`) get per-pin `GrpStI`/`GrpStO` when SIMPL saves them (13 of 13). This is display state: a Philips Hue Bridge placed without it compiled with 0 errors.
+- **Drop-down parameters:** SIMPL+ modules with drop-down parameters (`Lbl` in the `.ush`) get `Plb` labels. Not supported yet.
+
+### F12 round 4: automatic compiling (2026-11-24)
+Compiles now run unattended. `smpc` v0.2.0 (MIT, Norgate-AV/smpc; checksum verified; source reviewed: no network, no registry, only closes the SIMPL it starts) runs from an elevated scheduled task, `\SIMPL Agent\Compile`, installed once under `C:\Program Files\SimplAgent`. The task only compiles a `.smw` under the allowed folders. `compile_program` uses it. A compile takes about 40 to 70 s.
+
+- **`42-classroom`:** the classroom copy, plus the `tcnj_wolfvision_v1` macro and the `PTZCameraCalMod` SIMPL+ module placed by `add_module`, with unused required pins on placeholders. **0 errors, exactly the 3 warnings and 4 notices predicted.**
+- **`40/41-hue`:** the public Philips Hue program shipped without `.ush` headers. SIMPL+ files can be compiled without administrator rights by `SPlusCC.exe \rebuild <file.usp> \target series4`, which writes the `.ush`. But the recompiled modules changed pin counts against the macros' saved instances, so SIMPL warns "Number of inputs ... needed adjustment" (codes 202/205) and reports signals inside the macros. Not a clean comparison. The Bridge placed without `GrpSt` compiled with 0 errors.
+- **A compile doesn't save** the file unless SIMPL asks, so the revision stays the same.
+
 ## 8. Still to learn
 **From the F12 test set (`tools/make_f12_samples.py`):**
 - Whether SIMPL 4.32 loads and compiles our records without complaint (files 01, 02, 11).

@@ -73,7 +73,6 @@ class Editor:
         self.lib = library
         self.program_path = Path(program_path) if program_path else None
         self.installed_modules = installed_modules
-        self.allow_pin_groups = False  # experiments only; never reachable from the MCP tools
         self.verified_codes = load_verified_codes() if verified_codes == "default" else verified_codes
         self.log = EditLog()
         self.prog: Program = load(raw)
@@ -534,9 +533,9 @@ class Editor:
                 raise EditError(f"{name} must be next to the program so SIMPL can compile it")
             if an.module_has_parameter_lists(self.program_path, name):
                 raise EditError(f"{name} has drop-down parameters; adding those isn't proven yet")
-        if any("[~BeginGroup~]" in v or "[~EndGroup~]" in v for v in d.fields.values()) and not self.allow_pin_groups:
-            # SIMPL stores per-pin group state (GrpStI/GrpStO) for these: 13 of 13 in the corpus.
-            raise EditError(f"{name} groups its pins; adding modules with pin groups isn't proven yet")
+        # Modules with pin groups ([~BeginGroup~]) get per-pin group state (GrpStI/GrpStO) when SIMPL
+        # saves them. It's display state: a Philips Hue Bridge placed without it compiled with 0 errors
+        # in SIMPL 4.32 (F12 round 4, 2026-11-24), so these are allowed.
         return code, d, an.module_layout(code, d)
 
     def add_module(
@@ -611,6 +610,26 @@ class Editor:
         if any(c in v for v in values.values() for c in "\r\n"):
             raise EditError("parameter values must be one line")
 
+        # SIMPL requires every pin with a plain name (9,963 of 9,963 wired in the corpus);
+        # [bracketed] pins are optional. Unused required pins get SIMPL's standard placeholder
+        # for the pin's type, as programmers do (//__digital_reserved__ and friends).
+        wired = {(letter, n) for letter, n, _ in wiring}
+        placeholders: list[str] = []
+        for letter, pins in (("I", lay["inputs"]), ("O", lay["outputs"])):
+            n1 = lay["n1I"] if letter == "I" else lay["n1O"]
+            for n, nm, t in pins:
+                if (letter, n) in wired or nm == an.UNUSED_PIN or nm.startswith("["):
+                    continue
+                t = (t or "").lower()
+                if not t and code == an.SPLUS_CODE and n <= n1:
+                    t = "digital"
+                kinds = [k for k in ("digital", "analog", "serial") if k in t or (k == "serial" and "string" in t)]
+                if len(kinds) != 1:
+                    raise EditError(f"{module}: pin {letter}{n} ({nm}) must be connected and can take any signal "
+                                    "type, so give it a signal in 'connect'")
+                wiring.append((letter, n, f"//__{kinds[0]}_reserved__"))
+                placeholders.append(f"{letter}{n} {nm}")
+
         snapshot = self._snapshot()
         try:
             ins: dict[int, int] = {}
@@ -651,7 +670,9 @@ class Editor:
             self._restore(snapshot)
             raise
         self._reload()
-        self.log.add(f"added module {module} #{h} in folder #{parent}")
+        self.log.add(f"added module {module} #{h} in folder #{parent}"
+                     + (f"; {len(placeholders)} unused required pins on SIMPL's //__…_reserved__ placeholders"
+                        if placeholders else ""))
         return h
 
     def _append_child(self, parent: int, child: int) -> None:

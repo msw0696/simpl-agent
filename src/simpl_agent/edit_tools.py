@@ -152,7 +152,8 @@ class EditTools:
             return ("Tell the user: switch to SIMPL; it will say the file changed and offer to reload. "
                     "Click Yes, then compile (F12). Saving in SIMPL without reloading would overwrite "
                     "this edit.")
-        return "Tell the user to open the program in SIMPL and compile (F12)."
+        return ("SIMPL isn't open: check it with compile_program (if installed), or ask the user to open it "
+                "in SIMPL and compile (F12).")
 
     # ------------------------------------------------------------ tools
     def apply_edits(self, path: str, revision: str, summary: str, edits: list[dict[str, Any]],

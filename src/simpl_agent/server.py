@@ -41,7 +41,7 @@ TOOL_NAMES = (
     "simpl_agent_status", "describe_program", "find_library_symbols", "library_symbol_details",
     "folder_tree", "list_folder", "show_symbol", "find_signals", "follow_signal", "find_problems",
     "apply_edits", "edit_history", "undo_last_edit", "restore_version", "wait_for_simpl_save",
-    "module_details",
+    "module_details", "compile_program",
 )
 PROGRAM_EXTS = {".smw", ".umc", ".cmc"}
 KNOWN_SIGNATURES = {"SimplWindow": "program", "CresMacro": "macro", "UserMacro": "macro"}
@@ -56,7 +56,8 @@ Edit only through apply_edits; never edit .smw files by hand or with other tools
   saves, so re-read after the user saves and never reuse old handles.
 - Edits: plan in one line, then ONE apply_edits call with a summary and the revision you read.
   If SIMPL has the file open, ask the user to save there first (user_confirmed_saved=true).
-  Do only what was asked. Afterwards follow its next_step (Yes to SIMPL's reload, then F12).
+  Do only what was asked. Afterwards follow its next_step (Yes to SIMPL's reload, then F12), or,
+  if SIMPL is closed, check it yourself with compile_program.
   undo_last_edit / restore_version / edit_history manage history.
 - find_library_symbols / library_symbol_details give real pin names. Never invent symbols,
   pins or devices.
@@ -524,6 +525,48 @@ class Tools(EditTools):
             out["macro_output_argument"] = [f"O{n}" for _, n in flow.arg_out[h]]
         return out
 
+    def compile_program(self, path: str, timeout_s: int = 1500) -> dict[str, Any]:
+        """Compile with SIMPL Windows (via the installed compile task) and compare SIMPL's
+        messages with find_problems."""
+        from . import compile as cmp
+
+        p, data, prog = self._read_program(path)
+        if p.suffix.lower() != ".smw":
+            raise ToolError("only programs (.smw) can be compiled")
+        if not cmp.installed():
+            raise ToolError("automatic compiling isn't set up on this PC; ask the user to press F12 in SIMPL")
+        if self.windows():
+            raise ToolError("SIMPL Windows is open. The compile drives SIMPL's window, so ask the user to close "
+                            "SIMPL first (or to press F12 themselves).")
+        before = hashlib.sha256(data).hexdigest()
+        try:
+            lib = self.index().library
+        except ToolError:
+            lib = None
+        predicted = {(x.code, x.message) for x in an.find_problems(prog, lib)}
+        try:
+            r = cmp.compile_program(p, timeout_s=max(60, min(int(timeout_s), 3600)))
+        except cmp.CompileError as e:
+            raise ToolError(str(e)) from e
+        got = {(m["code"], m["message"]) for m in r["messages"]}
+        after = hashlib.sha256(p.read_bytes()).hexdigest()
+        failed = "incomplete symbols" in r["output"] or (r["exit_code"] not in (0, None) and not r["messages"])
+        return {
+            "path": str(p),
+            "compiled": not failed and r["counts"].get("errors", 0) == 0,
+            "counts": r["counts"],
+            "messages": r["messages"][:300],
+            "matches_find_problems": got == predicted,
+            "reported_by_simpl_only": sorted(got - predicted)[:50],
+            "predicted_only": sorted(predicted - got)[:50],
+            "file_changed_by_simpl": after != before,
+            "revision": after,
+            "note": ("SIMPL couldn't compile: see 'output'." if failed else
+                     "SIMPL's messages are the final word. If matches_find_problems is false, tell the user; "
+                     "it may be a SIMPL Agent rule to fix."),
+            **({"output": r["output"][-3000:]} if failed else {}),
+        }
+
     def module_details(self, path: str, module: str) -> dict[str, Any]:
         """A macro's or SIMPL+ module's pins and parameters, as SIMPL would place it in ``path``."""
         from .corpus import INSTALLED_MODULES
@@ -673,6 +716,13 @@ def create_server(tools: Tools | None = None) -> Any:
                  "needs, before placing it with apply_edits add_module. module: the file name.")
     async def module_details(path: str, module: str) -> dict[str, Any]:
         return await _run("module_details", path=path, module=module)
+
+    @server.tool(name="compile_program", description="Compile the program in SIMPL Windows (about a minute; "
+                 "SIMPL opens and closes by itself) and return SIMPL's errors, warnings and notices, compared "
+                 "with find_problems. Needs SIMPL to be closed and the compile task installed. Use it after "
+                 "apply_edits instead of asking the user to press F12.")
+    async def compile_program(path: str, timeout_s: int = 1500) -> dict[str, Any]:
+        return await _run("compile_program", path=path, timeout_s=timeout_s)
 
     @server.tool(name="edit_history", description="SIMPL Agent's change history for a program (newest "
                  "last), and whether the file changed outside SIMPL Agent since the last change.")

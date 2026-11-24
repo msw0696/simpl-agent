@@ -114,6 +114,11 @@ The gate for everything else: can we change a `.smw` file without SIMPL noticing
 - **Checked against SIMPL 4.32:** ten hand-compiled test files, where `find_problems` printed the same messages SIMPL did. That covers Buffers sharing an output, several analog drivers, `//` placeholder signals, and SIMPL's symbol numbers (`S-2.3`).
 - **Real job:** on a real public 3-Series classroom program (478 logic symbols, macros, SIMPL+ and SIMPL#), SIMPL compiled clean and `find_problems` reported nothing, matching it. That compile also showed that SIMPL skips the second-driver check when a macro or SIMPL+ module is one of the drivers.
 
+**Modules and automatic compiling (2026-11-24):**
+- `apply_edits` can now place macros and SIMPL+ modules (`add_module`), wired by pin name.
+- `compile_program` compiles with SIMPL Windows unattended and compares SIMPL's messages with `find_problems`. It uses [smpc](https://github.com/Norgate-AV/smpc) through a one-time elevated scheduled task; see `tools/compile_task/`.
+- **Live result:** a macro and a SIMPL+ module placed in the 478-symbol classroom program compiled with exactly the predicted messages.
+
 **First version done (2026-11-24):** a fresh Claude Code session used SIMPL Agent in plain English to explain a program, check it (matching SIMPL's F12 exactly) and add a One Shot. SIMPL reloaded the edit and compiled it exactly as predicted.
 
 ### M3: Edit and safety ✅ (live-tested in SIMPL 4.32, 2026-11-24)
