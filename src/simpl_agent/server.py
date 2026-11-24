@@ -189,7 +189,7 @@ class Tools(EditTools):
                 lib["error"] = str(e)
         return {
             "version": __version__,
-            "milestone": "M3: edit, with history and undo",
+            "milestone": "M4: devices (in progress)",
             "symbol_library": lib,
             "symbols_add_symbol_can_build": len(self.verified),
             "simpl_windows_open": [parse_simpl_title(t) for t in self.windows()],

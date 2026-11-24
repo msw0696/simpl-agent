@@ -25,8 +25,13 @@ from simpl_agent.catalog.devices import load_devices  # noqa: E402
 from simpl_agent.catalog.index import load_index  # noqa: E402
 from simpl_agent.corpus import GITHUB_CORPUS, iter_files  # noqa: E402
 from simpl_agent.smw import rawfile  # noqa: E402
-from simpl_agent.smw.device_edit import (PROVEN_SLOTS, device_record, instance_name,  # noqa: E402
-                                           symbol_counts, symbol_shape_problem)
+from simpl_agent.smw.device_edit import (  # noqa: E402
+    PROVEN_SLOTS,
+    device_record,
+    instance_name,
+    symbol_counts,
+    symbol_shape_problem,
+)
 from simpl_agent.smw.model import load  # noqa: E402
 
 CURRENT_DB = "1247"
