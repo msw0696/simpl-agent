@@ -10,7 +10,7 @@ SIMPL_EXTS = {".smw", ".cmc", ".umc"}
 # Crestron macros installed with SIMPL (read in place, never copied).
 INSTALLED_MODULES = Path(r"C:\Program Files (x86)\Crestron\Cresdb\Modules")
 # Public programs downloaded by tools/fetch_github_corpus.py.
-GITHUB_CORPUS = Path(os.environ.get("SIMPL_CORPUS", r"C:\Users\matth\simpl-corpus")) / "github"
+GITHUB_CORPUS = Path(os.environ.get("SIMPL_CORPUS", Path.home() / "simpl-corpus")) / "github"
 
 
 def iter_files(*roots: Path, exts: set[str] = SIMPL_EXTS) -> Iterator[Path]:

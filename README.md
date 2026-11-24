@@ -4,14 +4,14 @@
 
 MCP tools so Claude can read, check and edit Crestron SIMPL Windows (`.smw`) programs. Personal project.
 
-The plan lives in `C:\Users\matth\OneDrive\Documents\SIMPL\PLAN.md`. What we know about the file format is in [docs/format.md](docs/format.md).
+Needs Windows with SIMPL Windows installed (it reads SIMPL's own symbol library). What we know about the file format is in [docs/format.md](docs/format.md).
 
 ## Status
 
 **M1 (MCP server), 2026-11-24:** `python -m simpl_agent.server` runs a stdio MCP server with four read-only tools: `simpl_agent_status`, `describe_program`, `find_library_symbols` and `library_symbol_details`.
 - Every call is logged to `%LOCALAPPDATA%\SimplAgentudit.jsonl`.
 - The library index is cached in the same folder.
-- The skill is `skill/simpl-agent/SKILL.md`.
+- The skill is `.claude/skills/simpl-agent/SKILL.md`; Claude Code loads it automatically in this repo.
 
 **M0 (format proof): passed in SIMPL 4.32.**
 - Lossless reader and writer (`src/simpl_agent/smw/rawfile.py`) are byte-identical on 3,829 corpus files.

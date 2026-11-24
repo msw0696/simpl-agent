@@ -1,6 +1,6 @@
 """Build the M0 reload/compile test set from public corpus files.
 
-Writes numbered test programs for Matthew to open in SIMPL 4.32 and compile (F12),
+Writes numbered test programs for the user to open in SIMPL 4.32 and compile (F12),
 plus untouched control copies, so a failure can be pinned on our edit. A copy of
 every file as we wrote it is kept in <out>/_as_written for diffing against SIMPL's
 re-save.
@@ -56,7 +56,7 @@ def crlf(raw: RawFile) -> RawFile:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=r"C:\Users\matth\OneDrive\Documents\SIMPL\f12-test")
+    ap.add_argument("--out", default=str(Path.home() / "simpl-f12-test"))
     a = ap.parse_args()
     out = Path(a.out)
     if out.exists() and any(out.iterdir()):

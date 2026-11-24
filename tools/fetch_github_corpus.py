@@ -1,6 +1,6 @@
 """Download public SIMPL Windows programs from GitHub into a local test corpus.
 
-The corpus lives OUTSIDE the repo (default C:\\Users\\matth\\simpl-corpus\\github)
+The corpus lives OUTSIDE the repo (default ~/simpl-corpus/github, or $SIMPL_CORPUS/github)
 and is never committed. Files are untrusted data: this script only saves bytes,
 it never opens or runs them. Uses the `gh` CLI for auth.
 
@@ -17,6 +17,9 @@ import sys
 import time
 from pathlib import Path
 from urllib.parse import quote
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from simpl_agent.corpus import GITHUB_CORPUS  # noqa: E402
 
 QUERIES = ["SimplWindow", "ObjTp", "SavedBy", "Sgntr"]
 
@@ -61,7 +64,7 @@ def blob_sha(data: bytes) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=r"C:\Users\matth\simpl-corpus\github")
+    ap.add_argument("--out", default=str(GITHUB_CORPUS))
     ap.add_argument("--ext", default="smw")
     a = ap.parse_args()
     out = Path(a.out)

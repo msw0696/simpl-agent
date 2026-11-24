@@ -9,7 +9,7 @@
 | Crestron macros installed with SIMPL (`Cresdb\Modules\*.cmc`) | 3,449 | SIMPL 2.00 to 4.30 |
 | Public `.smw` programs from GitHub | 380 from 144 repos | SIMPL 1.40 to 4.32; 17 by 4.32 |
 
-The corpus files stay where they are or in `C:\Users\matth\simpl-corpus\`. None are copied into this repo.
+The corpus files stay where they are or in `~/simpl-corpus/` (see `tools/fetch_github_corpus.py`). None are copied into this repo.
 
 ## 1. File container (holds for all 3,829 files)
 - **Encoding:** latin-1.
