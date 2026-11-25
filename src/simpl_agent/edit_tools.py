@@ -50,12 +50,14 @@ OP_KEYS: dict[str, tuple[set[str], set[str]]] = {
 }
 
 
-def _problem_keys(prog, lib) -> dict[tuple, dict[str, Any]]:
+def _problem_keys(prog, lib, path=None) -> dict[tuple, dict[str, Any]]:
     """Problems keyed by what they're about (code, signal handle, symbols), not by text,
     so renaming a signal doesn't make its existing warning look new."""
     by_name = {s.name: h for h, s in prog.signals.items()}
     out = {}
-    for p in an.find_problems(prog, lib):
+    from .corpus import INSTALLED_MODULES
+
+    for p in an.find_problems(prog, lib, path, INSTALLED_MODULES):
         # A signal's problem is the same problem however many symbols touch it.
         key = (p.code, by_name.get(p.signal)) if p.signal is not None else (p.code, tuple(p.symbols))
         out[key] = {"code": p.code, "signal": p.signal, "message": p.message}
@@ -204,7 +206,7 @@ class EditTools:
 
         ed = Editor(rawfile.parse(data), lib, program_path=p, installed_modules=INSTALLED_MODULES)
         before_struct = structural_problems(ed.prog)
-        before_probs = _problem_keys(ed.prog, lib)
+        before_probs = _problem_keys(ed.prog, lib, p)
         for i, e in enumerate(edits, 1):
             try:
                 self._apply_one(ed, e)
@@ -215,11 +217,21 @@ class EditTools:
         added = sorted(structural_problems(check) - before_struct)
         if added:
             raise ToolError(f"the result would break the file's structure, nothing was changed: {added[:5]}")
-        after_probs = _problem_keys(check, lib)
+        after_probs = _problem_keys(check, lib, p)
+        # Matched by signal handle (so a rename isn't new) or, when a symbol was re-placed and the
+        # signals were renumbered, by the same code on a signal of the same name.
+        def named(probs: dict, keys) -> set:
+            return {(probs[k]["code"], probs[k]["signal"]) for k in keys if probs[k]["signal"] is not None}
+
+        before_named, after_named = named(before_probs, before_probs), named(after_probs, after_probs)
+        new_keys = [k for k in after_probs.keys() - before_probs.keys()
+                    if (after_probs[k]["code"], after_probs[k]["signal"]) not in before_named]
+        fixed_keys = [k for k in before_probs.keys() - after_probs.keys()
+                      if (before_probs[k]["code"], before_probs[k]["signal"]) not in after_named]
         result = {
             "changes": ed.log.lines,
-            "new_problems": [after_probs[k] for k in sorted(after_probs.keys() - before_probs.keys(), key=str)],
-            "problems_fixed": len(before_probs.keys() - after_probs.keys()),
+            "new_problems": [after_probs[k] for k in sorted(new_keys, key=str)],
+            "problems_fixed": len(fixed_keys),
         }
         if dry_run:
             return {"path": str(p), "dry_run": True, "written": False, **result}

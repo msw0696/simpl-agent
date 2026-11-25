@@ -252,3 +252,53 @@ def test_placed_modules_rebuild_exactly() -> None:
         pytest.skip("no module files in the corpus (run tools/fetch_module_files.py)")
     assert checked > 500 and special < 30
     assert not bad, (len(bad), bad[:8])
+
+
+# ---------------------------------------------------------------- changed modules
+def placed_timer(tmp_path: Path):
+    ed, p = module_editor(tmp_path)
+    (tmp_path / "fake_timer.ush").write_bytes(USH_FULL.encode("latin-1"))
+    h = ed.add_module("fake_timer.usp", "Logic", connect={"Trig": "t_trig", "Hours": "t_hours", "Done": "t_done",
+                                                         "Progress": "t_progress"}, parameters={"Timeout": "5s"})
+    p.write_bytes(ed.raw.to_bytes())
+    return ed, p, h
+
+
+def test_changed_module_is_reported(tmp_path: Path) -> None:
+    """SIMPL keeps a placed module's wires by position (SIMPL 4.32, 2026-11-25): pin counts that
+    no longer fit, or a signal of the wrong type on a pin, are SA-MODULE-CHANGED."""
+    from simpl_agent.smw.model import load
+
+    ed, p, h = placed_timer(tmp_path)
+    prog = load(rawfile.read(p))
+    assert [x for x in an.module_problems(prog, p) if h in x.symbols] == []  # (#6 was placed for another header)
+    fields = dict(an._module_fields(str(tmp_path / "fake_timer.ush")))
+    s = prog.symbols[h]
+    assert an.module_fit_issues(prog, s, {**fields, "MinVariableInputs": "3"}) == [
+        "2 digital inputs placed, the module now has 3"]
+    assert an.module_fit_issues(prog, s, {**fields, "InputList2SigType1": "Serial"}) == [
+        'pin I3 is now serial, but its signal "t_hours" is analog']
+    (tmp_path / "fake_timer.ush").write_bytes(USH_FULL.replace("MinVariableInputs=2", "MinVariableInputs=1")
+                                              .encode("latin-1"))
+    import os
+
+    os.utime(tmp_path / "fake_timer.ush", (1, 1))  # a new date, as a recompile gives (the header is cached by date)
+    probs = [x for x in an.find_problems(prog, None, p) if h in x.symbols and x.code.startswith("SA-")]
+    assert [x.code for x in probs] == ["SA-MODULE-CHANGED"]
+    assert "2 digital inputs placed, the module now has 1" in probs[0].message
+
+
+def test_placed_copies_named_from_the_previous_build(tmp_path: Path) -> None:
+    from simpl_agent.splus import placed_copies
+
+    ed, p, h = placed_timer(tmp_path)
+    old = dict(an._module_fields(str(tmp_path / "fake_timer.ush")))
+    new_pins = {"inputs": [{"name": "Trig"}, {"name": "Reset"}, {"name": "Hours"}],
+                "outputs": [{"name": "Progress"}], "parameters": [{"name": "Timeout"}]}
+    (c,) = [c for c in placed_copies(tmp_path / "fake_timer.usp", old, new_pins) if c["symbol"] == f"#{h}"]
+    assert c["symbol"] == f"#{h}" and "already_out_of_date" not in c
+    assert c["wiring_before"]["inputs"] == {"Trig": "t_trig", "Hours": "t_hours"}
+    assert c["re_place_with"] == {"remove_symbol": f"#{h}", "add_module": {
+        "module": "fake_timer.usp", "connect": {"Trig": "t_trig", "Hours": "t_hours", "Progress": "t_progress"},
+        "parameters": {"Timeout": "5s"}}}
+    assert c["signals_on_removed_pins"] == {"Done": "t_done"}

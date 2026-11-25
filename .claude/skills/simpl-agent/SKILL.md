@@ -61,9 +61,10 @@ Tools for Crestron SIMPL Windows. They read, check and **edit** programs. Every 
 5. **Place it** with `module_details` then `apply_edits add_module` (wire pins by name), then **`compile_program`**. A SIMPL that was already open keeps the module build it loaded first; `compile_program` saves and restarts one started by `simpl_open`, but ask the user to reopen an admin SIMPL.
 6. **Changing a placed module's pins** (adding, removing, reordering or retyping inputs/outputs): SIMPL keeps a placed module's wires **by position** in each pin list, never by name.
    - **What goes wrong:** an added or retyped pin stops the compile ("Incomplete Symbols"). A removed pin compiles with only notice 202 ("needed adjustment"), with the wires shifted onto the wrong pins. Swapped pins compile with no message at all.
-   - **Before recompiling the `.usp`,** note each placed copy's wiring by pin name with `show_symbol`. Afterwards `show_symbol` puts the new pin names on the old positions.
-   - **Then re-place each copy** in ONE `apply_edits`: `remove_symbol` the old one, then `add_module` with `connect` by pin name, using the wiring you noted. Wire new pins as the user says.
-   - **Renaming a pin** without moving it needs nothing: SIMPL keeps the wire on the same position.
+   - **`splus_compile` reports it:** `pins_changed` says what moved, appeared, disappeared or changed type. `placed_copies` lists every copy in the programs beside the module, with its wiring named by the previous build (`wiring_before`), a ready `re_place_with`, and any `signals_on_removed_pins`.
+   - **Tell the user, then re-place each copy** in ONE `apply_edits`: `remove_symbol`, then `add_module` from `re_place_with` (with `folder` set to the copy's folder). Ask how to wire new pins and what to do with signals on removed pins. Do this before compiling the module again; if a copy says `already_out_of_date`, its names may be wrong, so check its wiring with the user.
+   - **Renaming a pin** without moving it needs nothing (`wires_stay: true`): SIMPL keeps the wire on the same position.
+   - **Changed outside `splus_compile`:** `find_problems` reports `SA-MODULE-CHANGED` when pin counts or types no longer fit, and `show_symbol` adds `module_changed`, because its pin names are then the new ones on old positions. Swaps can't be seen in the program afterwards.
 
 ## History
 - **`edit_history`:** what SIMPL Agent changed, and whether the file was changed elsewhere since.
@@ -76,7 +77,7 @@ Tools for Crestron SIMPL Windows. They read, check and **edit** programs. Every 
   - `LGCMCVT103`, notice: a signal is driven but goes nowhere.
   - `LGCMCVT220`, warning: a digital signal has a second driving source.
 - **Macro files:** results on macro files (`.umc`/`.cmc`) themselves haven't been checked against SIMPL yet. Say so if you check one.
-- **SIMPL Agent's own checks** start with `SA-`: duplicate names, broken references, and symbols SIMPL marked incomplete.
+- **SIMPL Agent's own checks** start with `SA-`: duplicate names, broken references, symbols SIMPL marked incomplete, and placed SIMPL+ modules whose pins changed since (`SA-MODULE-CHANGED`).
 - **Exemptions** (confirmed by SIMPL 4.32):
   - The built-in signals and `//` placeholder names are never reported.
   - Buffer-type symbols may share an output.

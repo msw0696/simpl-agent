@@ -6,7 +6,7 @@ An [MCP](https://modelcontextprotocol.io) server that lets Claude read, check, e
 
 You ask in plain English ("why doesn't the projector turn off?", "what will SIMPL warn about?", "add a TSW-1070 at IP ID 03"). Claude answers by reading the real program through these tools. It doesn't guess from the raw text.
 
-> **Status (2026-11-25):** M0 to M5 are done and checked against SIMPL 4.32's own saves and compiles: reading, checking, editing, devices and new programs. A real conference-room program built end to end compiled clean. **M6 SIMPL+** is under way: writing, compiling and placing SIMPL+ modules works end to end. See the [roadmap](#roadmap).
+> **Status (2026-11-25):** M0 to M6 are done and checked against SIMPL 4.32's own saves and compiles: reading, checking, editing, devices, new programs and **SIMPL+ modules** (writing, compiling and placing them, drop-down parameters, and warnings when a placed module's pins change). A real conference-room program built end to end compiled clean. See the [roadmap](#roadmap).
 >
 > This is a personal project, built for one programmer's own use. It is not a Crestron product and isn't affiliated with Crestron.
 
@@ -108,7 +108,7 @@ These are built into the tools and the skill:
 | Extras | Placing macros and SIMPL+ modules; unattended compiling | ✅ |
 | **M4** Devices | Device tree, free IDs, adding and removing devices, frames, cards, drivers, panel joins | ✅ Matches SIMPL 4.32's own saves |
 | **M5** New programs | Start a program from scratch | ✅ `new_program`: 13 processors proven identical to SIMPL's File > New (CP3, CP3N, CP4, CP4N, PRO3, PRO4, AV4, MC3, MC4, RMC3, RMC4, DIN-AP4, MPC3-302) |
-| **M6** SIMPL+ | Write, compile and place SIMPL+ modules | 🔨 Works end to end; `splus_reference`, `splus_compile` |
+| **M6** SIMPL+ | Write, compile and place SIMPL+ modules | ✅ Checked in SIMPL 4.32: drop-downs, changed pins; `splus_reference`, `splus_compile` |
 | **M7** Touch panels | Check joins between program and panel | Later |
 | **M8** Debugger traces | Read saved Debugger traces | Later |
 
@@ -168,7 +168,7 @@ These are built into the tools and the skill:
 - **Handles:** new devices, symbols and their `Db`/`Et`/`Cm` records take the lowest unused handle, as SIMPL does after a delete.
 - **Not supported (refused with the reason):** IR drivers (they need an IR driver file from Crestron's database), one-way serial drivers on IR ports, devices whose symbols SIMPL marks incomplete until wired (Virtual Communication Port), and `new_program` for DMPS3, 2-Series and the Ethernet-only processor.
 
-### M6: SIMPL+ 🔨 (2026-11-25)
+### M6: SIMPL+ ✅ (2026-11-25)
 
 - **Workflow:** look things up with `splus_reference`, write the `.usp` beside the program, `splus_compile` until clean, place it with `add_module`, then `compile_program`.
 - **`splus_reference`** searches Crestron's SIMPL+ Language Reference (`Simpl+lr.chm`, installed with SIMPL). On first use it is unpacked with Windows' `hh.exe` into SIMPL Agent's cache, never into this repo. It covers 526 pages: syntax, parameters, return values, examples, series support, and one page per compiler error. A `#CATEGORY` lookup also lists the category IDs.
@@ -188,7 +188,9 @@ These are built into the tools and the skill:
   | two pins swapped | compiles with no message; the wires are on the wrong pins |
   | pin renamed | compiles; the wire stays (fine) |
 
-  **The fix:** note the wiring by pin name before recompiling, then `remove_symbol` and `add_module` with `connect` by name in one `apply_edits`. SIMPL compiled both re-placed test programs as predicted and re-saved them byte for byte. When SIMPL has marked a module incomplete, it also marks every folder above it; `remove_symbol` clears those marks once nothing incomplete is left, as SIMPL does.
+  **Warnings:** `splus_compile` compares the new pins with the previous build. When they changed, it lists every placed copy in the programs beside the module, with its wiring named by the previous build and a ready re-place. This is the only way to catch swapped pins. `find_problems` reports `SA-MODULE-CHANGED` when a placed copy's pin counts or types no longer fit (0 false alarms on 365 placed modules in the corpus). `show_symbol` and `compile_program` say so too.
+
+  **The fix:** `remove_symbol` and `add_module` with `connect` by name in one `apply_edits`. SIMPL compiled both re-placed test programs as predicted and re-saved them byte for byte. When SIMPL has marked a module incomplete, it also marks every folder above it; `remove_symbol` clears those marks once nothing incomplete is left, as SIMPL does.
 
 ### Later
 

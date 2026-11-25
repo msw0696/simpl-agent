@@ -84,12 +84,92 @@ def module_pins(ush: Path) -> dict | None:
             "parameters": pins(lay["parameters"])}
 
 
+def compare_pins(old: dict, new: dict) -> dict | None:
+    """How a module's pins changed between two builds (module_pins results), or None if they didn't.
+
+    Placed copies keep their wires by position in each pin list (SIMPL 4.32, 2026-11-25), so any
+    change but a pure rename leaves wires on the wrong pins or stops the compile. ``wires_stay``
+    is True only when nothing moved, appeared, disappeared or changed type (renames only)."""
+    out: dict = {}
+    stay = True
+    for side in ("inputs", "outputs", "parameters"):
+        a = [(p["name"], (p.get("type") or "").lower()) for p in old.get(side, [])]
+        b = [(p["name"], (p.get("type") or "").lower()) for p in new.get(side, [])]
+        if a == b:
+            continue
+        an_, bn = [n for n, _ in a], [n for n, _ in b]
+        moved = [n for n in an_ if n in bn and an_.index(n) != bn.index(n)]
+        retyped = [n for n, t in a if n in bn and b[bn.index(n)][1] != t]
+        removed = [n for n in an_ if n not in bn]
+        added = [n for n in bn if n not in an_]
+        renamed_only = (len(a) == len(b) and not moved and not retyped
+                        and all(x[1] == y[1] for x, y in zip(a, b, strict=True)))
+        stay = stay and renamed_only
+        out[side] = {"before": an_, "after": bn,
+                     **({"renamed": [f"{x[0]} -> {y[0]}" for x, y in zip(a, b, strict=True) if x[0] != y[0]]}
+                        if renamed_only else
+                        {k: v for k, v in (("removed", removed), ("added", added), ("moved", moved),
+                                           ("type_changed", retyped)) if v})}
+    if not out:
+        return None
+    return {**out, "wires_stay": stay}
+
+
+def placed_copies(usp: Path, old_fields: dict[str, str], new_pins: dict) -> list[dict]:
+    """Copies of ``usp`` placed in the programs beside it, with their wiring named by the module's
+    previous build (``old_fields``), and how to re-place each one by name."""
+    from . import analysis as an
+    from .catalog.symlib import LibSymbol
+    from .smw import rawfile
+    from .smw.model import load
+
+    old = LibSymbol(code=an.SPLUS_CODE, name=old_fields.get("Name", ""), fields=old_fields)
+    new_in = {p["name"] for p in new_pins.get("inputs", [])}
+    new_out = {p["name"] for p in new_pins.get("outputs", [])}
+    new_par = {p["name"] for p in new_pins.get("parameters", [])}
+    out = []
+    for prog_path in sorted(usp.parent.glob("*.smw")):
+        try:
+            prog = load(rawfile.read(prog_path))
+        except Exception:  # noqa: BLE001 - not a readable program; skip it
+            continue
+        for s in prog.symbols.values():
+            if s.code != an.SPLUS_CODE or (s.name or "").strip().lower() != usp.name.lower():
+                continue
+            names = {h: sg.name for h, sg in prog.signals.items()}
+            wired_in = {an.pin_label(old, s, "I", n): names.get(h, f"#{h}") for n, h in sorted(s.inputs.items())}
+            wired_out = {an.pin_label(old, s, "O", n): names.get(h, f"#{h}") for n, h in sorted(s.outputs.items())}
+            params = {an.pin_label(old, s, "P", n): v for n, v in sorted(s.params.items())
+                      if an.pin_label(old, s, "P", n) not in (an.UNUSED_PIN, an.REFERENCE_NAME)}
+            connect = {k: v for k, v in wired_in.items() if k in new_in}
+            connect.update({k: v for k, v in wired_out.items() if k in new_out and k not in connect})
+            gone = {k: v for k, v in {**wired_in, **wired_out}.items() if k not in new_in | new_out}
+            stale = an.module_fit_issues(prog, s, old_fields)
+            out.append({
+                **({"already_out_of_date": "This copy didn't fit the previous build either ("
+                    + "; ".join(stale[:3]) + "), so it was placed with an older one: the pin names in "
+                    "'wiring_before' may be wrong. Check its wiring with the user."} if stale else {}),
+                "program": str(prog_path), "symbol": f"#{s.handle}", "simpl_number": an.simpl_number(prog, s.handle),
+                "wiring_before": {"inputs": wired_in, "outputs": wired_out, "parameters": params},
+                "re_place_with": {"remove_symbol": f"#{s.handle}",
+                                  "add_module": {"module": usp.name, "connect": connect,
+                                                 "parameters": {k: v for k, v in params.items() if k in new_par}}},
+                **({"signals_on_removed_pins": gone} if gone else {}),
+            })
+    return out
+
+
 def compile_module(path: Path, targets: list[str], timeout_s: int = 600, exe: Path = SPLUSCC) -> dict:
     """Run SPlusCC on one .usp and return the parsed result (fixing its line endings first)."""
     path = Path(path)
     crlf_fixed = fix_line_endings(path)
     ush = path.with_suffix(".ush")
     before = ush.stat().st_mtime if ush.exists() else None
+    old_pins = module_pins(ush) if before is not None else None
+    if old_pins is not None:
+        from .analysis import _module_fields
+
+        old_fields = dict(_module_fields(str(ush)) or {})
     # One command-line string: SPlusCC reads its own switches ('\\rebuild', '\\target').
     cmd = subprocess.list2cmdline([str(exe), "\\rebuild", str(path), "\\target", *targets])
     r = subprocess.run(cmd, capture_output=True, stdin=subprocess.DEVNULL, timeout=timeout_s,
@@ -102,8 +182,13 @@ def compile_module(path: Path, targets: list[str], timeout_s: int = 600, exe: Pa
     warnings = sum(t["warnings"] for t in per_target.values())
     after = ush.stat().st_mtime if ush.exists() else None
     written = after is not None and after != before
+    pins = module_pins(ush) if written else None
+    changed = compare_pins(old_pins, pins) if old_pins is not None and pins is not None else None
+    copies = placed_copies(path, old_fields, pins) if changed else []
     return {"compiled": errors == 0 and bool(per_target), "exit_code": r.returncode, "errors": errors,
             "warnings": warnings, "targets": per_target,
             "ush_written": written, "ush": str(ush) if ush.exists() else None,
             **({"line_endings_fixed": True} if crlf_fixed else {}),
-            **({"module": pins} if written and (pins := module_pins(ush)) is not None else {})}
+            **({"module": pins} if pins is not None else {}),
+            **({"pins_changed": changed} if changed else {}),
+            **({"placed_copies": copies} if copies else {})}

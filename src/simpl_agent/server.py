@@ -226,7 +226,7 @@ class Tools(EditTools):
                 lib["error"] = str(e)
         return {
             "version": __version__,
-            "milestone": "M6: SIMPL+ modules (in progress); M0-M5 done",
+            "milestone": "M0-M6 done (M6: SIMPL+ modules); next: M7 touch panels",
             "symbol_library": lib,
             "symbols_add_symbol_can_build": len(self.verified),
             "simpl_windows_open": [parse_simpl_title(t) for t in self.windows()],
@@ -506,7 +506,16 @@ class Tools(EditTools):
                     for n in range(1, n_max + 1)]
 
         comments = an.comment_lines(s)
+        changed = None
+        if s.code == an.SPLUS_CODE:
+            from .corpus import INSTALLED_MODULES
+
+            hit = [x for x in an.module_problems(prog, p, INSTALLED_MODULES) if h in x.symbols]
+            if hit:
+                changed = (hit[0].message + " The pin names below are the module's current ones on the "
+                           "placed positions, so they may not be the pins these signals were wired to.")
         return {
+            **({"module_changed": changed} if changed else {}),
             "path": str(p), "revision": rev, "symbol": f"#{h}", "name": an.display_name(s, lib),
             "library": {"code": s.code, "name": ls.name if ls else None},
             "folder": an.folder_path(prog, h, lib), "simpl_number": an.simpl_number(prog, h),
@@ -704,6 +713,19 @@ class Tools(EditTools):
         if res.get("compiled") and res.get("module") and not any(
                 res["module"][k] for k in ("inputs", "outputs")):
             notes.append("The module has no inputs or outputs; check that's intended.")
+        ch = res.get("pins_changed")
+        if ch and ch.get("wires_stay"):
+            notes.append("Pins were only renamed: placed copies keep their wires on the same pins, so nothing "
+                         "needs re-placing.")
+        elif ch:
+            n = len(res.get("placed_copies", []))
+            notes.append("The module's pins changed. SIMPL keeps placed copies' wires by position, so they'd land "
+                         "on the wrong pins, or SIMPL won't compile (Incomplete Symbols). "
+                         + (f"{n} placed cop{'y' if n == 1 else 'ies'} beside it: tell the user, then re-place each "
+                            "in ONE apply_edits (remove_symbol, then add_module with 're_place_with'); ask how to "
+                            "wire new pins and what to do with 'signals_on_removed_pins'. Do it before compiling "
+                            "the module again: 'wiring_before' is named from the previous build only."
+                            if n else "No program beside it places it."))
         notes.append("Place it with apply_edits add_module (the .usp and .ush beside the program), then "
                      "compile_program. A SIMPL that was already open keeps the build it loaded first; "
                      "compile_program saves and restarts a SIMPL started by simpl_open when needed; ask the user "
@@ -850,6 +872,9 @@ class Tools(EditTools):
         except ToolError:
             lib = None
         predicted = {(x.code, x.message) for x in an.find_problems(prog, lib)}
+        from .corpus import INSTALLED_MODULES
+
+        changed_modules = [x.message for x in an.module_problems(prog, p, INSTALLED_MODULES)]
         timeout = max(60, min(int(timeout_s), 3600))
         restarted: list[str] = []
         if st.get("open") and st.get("controllable"):
@@ -897,6 +922,8 @@ class Tools(EditTools):
                      "SIMPL's messages are the final word. If matches_find_problems is false, tell the user; "
                      "it may be a SIMPL Agent rule to fix."),
             **({"output": r["output"][-3000:]} if failed else {}),
+            # SIMPL says only "Incomplete Symbols" (or notice 202) for these; this says which and why.
+            **({"modules_changed_since_placed": changed_modules} if changed_modules else {}),
             **({"simpl_restarted": f"SIMPL was saved and restarted first: it had loaded an older build of "
                                    f"{', '.join(restarted)}. The new SIMPL is left open on the program."}
                if restarted else {}),
@@ -975,7 +1002,9 @@ class Tools(EditTools):
 
     def find_problems(self, path: str, limit: int = 200) -> dict[str, Any]:
         p, rev, prog, lib = self._load(path)
-        probs = an.find_problems(prog, lib)
+        from .corpus import INSTALLED_MODULES
+
+        probs = an.find_problems(prog, lib, p, INSTALLED_MODULES)
         counts: dict[str, int] = {}
         for x in probs:
             counts[x.severity] = counts.get(x.severity, 0) + 1

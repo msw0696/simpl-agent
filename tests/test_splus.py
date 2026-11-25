@@ -99,3 +99,18 @@ def test_stale_module_builds_are_found(tmp_path: Path, tiny: bytes) -> None:
     assert t._stale_splus(prog, 123) == ["Fb.ush"]
     t.live.start = time.time() + 5  # started after it
     assert t._stale_splus(prog, 123) == []
+
+
+def test_compare_pins() -> None:
+    from simpl_agent.splus import compare_pins
+
+    def pins(*names: str, kind: str = "Digital") -> dict:
+        return {"inputs": [{"pin": i, "name": n, "type": kind} for i, n in enumerate(names, 1)], "outputs": []}
+
+    assert compare_pins(pins("a", "b"), pins("a", "b")) is None
+    swap = compare_pins(pins("a", "b"), pins("b", "a"))
+    assert swap == {"inputs": {"before": ["a", "b"], "after": ["b", "a"], "moved": ["a", "b"]}, "wires_stay": False}
+    assert compare_pins(pins("a", "b"), pins("a", "bee"))["wires_stay"] is True
+    gone = compare_pins(pins("a", "b"), pins("b"))["inputs"]
+    assert gone["removed"] == ["a"] and gone["moved"] == ["b"]
+    assert compare_pins(pins("a"), pins("a", kind="Analog"))["inputs"]["type_changed"] == ["a"]

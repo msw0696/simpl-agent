@@ -275,6 +275,78 @@ def _cue(cues: dict[int, str], n: int) -> str | None:
     return own
 
 
+def _pin_type(f: dict[str, str], key: str, n: int) -> str:
+    """A module pin's type: its own SigType, else the nearest one before it (an array's pins
+    share their first pin's type)."""
+    k = max((i for i in range(1, n + 1) if f.get(f"{key}{i}")), default=None)
+    return (f.get(f"{key}{k}") or "").lower() if k else ""
+
+
+def module_fit_issues(prog: Program, s: Symbol, f: dict[str, str]) -> list[str]:
+    """Why placed SIMPL+ module ``s`` doesn't fit the module build with Symbol fields ``f``:
+    pin counts outside its ranges, or wired signals of the wrong type. [] when it fits."""
+    r = s.record
+    n1i, n2i, n1o = _int(r.get("n1I")), _int(r.get("n2I")), _int(r.get("n1O"))
+    counts = {
+        "digital inputs": (n1i, "MinVariableInputs", "MaxVariableInputs", 0),
+        "analog/serial inputs": (n2i, "MinVariableInputsList2", "MaxVariableInputsList2", 0),
+        "digital outputs": (n1o, "MinVariableOutputs", "MaxVariableOutputs", 0),
+        "analog/serial outputs": (_int(r.get("mO")) - n1o, "MinVariableOutputsList2", "MaxVariableOutputsList2", 0),
+        "parameters": (_int(r.get("mP")), "MinVariableParams", "MaxVariableParams", _int(f.get("NumFixedParams"))),
+    }
+    issues = []
+    for what, (have, lo_k, hi_k, fixed) in counts.items():
+        lo = fixed + _int(f.get(lo_k))
+        hi = fixed + max(_int(f.get(hi_k)), _int(f.get(lo_k)))
+        if not lo <= have <= hi:
+            want = str(lo) if lo == hi else f"{lo} to {hi}"
+            issues.append(f"{have} {what} placed, the module now has {want}")
+    if not issues:
+        builtin = set(prog.builtin_signals.values())
+        for letter, pins, n1, k1, k2 in (("I", s.inputs, n1i, "InputSigType", "InputList2SigType"),
+                                         ("O", s.outputs, n1o, "OutputSigType", "OutputList2SigType")):
+            for n, h in sorted(pins.items()):
+                sg = prog.signals.get(h)
+                if sg is None or h in builtin:
+                    continue
+                t = (_pin_type(f, k1, n) or "digital") if n <= n1 else _pin_type(f, k2, n - n1)
+                t = "serial" if t in ("string", "buffer") else t
+                if t in ("digital", "analog", "serial") and sg.type != t:
+                    issues.append(f"pin {letter}{n} is now {t}, but its signal \"{sg.name}\" is {sg.type}")
+    return issues
+
+
+def module_problems(prog: Program, program_path: Path | None, installed: Path | None = None) -> list[Problem]:
+    """Placed SIMPL+ modules that no longer fit their compiled module (.ush beside the program).
+
+    SIMPL keeps a placed module's wires by position in each pin list, never by name (tested in
+    SIMPL 4.32, 2026-11-25). When the module's pins change: added or retyped pins make the
+    symbol incomplete, so nothing compiles; a removed pin compiles with notice 202 and the wires
+    shift onto other pins. Pin counts outside the module's range and signals of the wrong type
+    are caught here. Swapped or renamed pins leave no trace in the program (splus_compile
+    reports those when it recompiles the module).
+    """
+    out: list[Problem] = []
+    if program_path is None:
+        return out
+    for s in prog.symbols.values():
+        if s.code != SPLUS_CODE:
+            continue
+        d = module_definition(program_path, s, installed)
+        if d is None:
+            continue
+        issues = module_fit_issues(prog, s, d.fields)
+        if issues:
+            where = simpl_number(prog, s.handle) or f"#{s.handle}"
+            out.append(Problem(
+                "warning", "SA-MODULE-CHANGED",
+                f"{s.name} at {where} no longer matches its compiled module: {'; '.join(issues[:4])}. SIMPL keeps "
+                "the wires by position, so they may be on the wrong pins (or SIMPL won't compile). Re-place it: "
+                "remove_symbol, then add_module with connect by pin name.",
+                symbols=[s.handle]))
+    return out
+
+
 @dataclass
 class Flow:
     """Who drives each signal and where it goes."""
@@ -328,7 +400,8 @@ class Problem:
         return d
 
 
-def find_problems(prog: Program, lib: SymbolLibrary | None) -> list[Problem]:
+def find_problems(prog: Program, lib: SymbolLibrary | None,
+                  program_path: Path | None = None, installed: Path | None = None) -> list[Problem]:
     flow = signal_flow(prog)
     builtin = set(prog.builtin_signals.values())
     out: list[Problem] = []
@@ -392,6 +465,7 @@ def find_problems(prog: Program, lib: SymbolLibrary | None) -> list[Problem]:
             out.append(Problem("warning", "SA-INCOMPLETE",
                                f"Symbol #{s.handle} ({display_name(s, lib)}) is marked incomplete by SIMPL: a required pin is empty.",
                                symbols=[s.handle]))
+    out += module_problems(prog, program_path, installed)
     order = {"error": 0, "warning": 1, "notice": 2}
     out.sort(key=lambda p: order[p.severity])
     return out
