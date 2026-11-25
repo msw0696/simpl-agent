@@ -34,6 +34,7 @@ Tools for Crestron SIMPL Windows. They read, check and **edit** programs. Every 
    - **Modules (`add_module`):** wire pins by name in `connect`. SIMPL requires every pin with a plain name; ones you don't connect go on SIMPL's standard placeholders (`//__digital_reserved__` and so on), and the result says how many. `[bracketed]` pins are optional. Every listed parameter needs a value.
      - **Pins that take any type** must be connected explicitly.
      - **SIMPL+ modules** need their compiled `.ush` beside the program; modules with drop-down parameters aren't supported yet.
+   - **Device parameters and pins:** `add_device` also takes `parameters` ({name: value} or a list) and `connect` ({pin name: signal}). If it says a parameter has no default (e.g. a TCP/IP Client's Port), ask the user for the value. COM drivers go on a COM card's port: `network` = the card's '#handle', `address` = the port number.
    - **Panel and EISC joins (`wire_joins`):** `{symbol: '#h', joins: [{type: 'digital', join: 10, in: 'Power_On_Fb', out: 'Power_On_Press'}, ...]}`. `in` is the signal into the device (a panel's feedback), `out` the signal it drives (a press). Join lists grow as needed. Use the panel's symbol handle (`device_tree` shows it).
    - **SIMPL+:** after writing or changing a `.usp`, run `splus_compile {path, targets: ['series4']}` (add 'series3' for 3-Series programs). Fix the errors it reports, then place it with `add_module`. The compiler's line numbers are its own count.
    - **New programs:** `new_program {path, processor, system_name}` writes a new, empty program exactly as SIMPL's File > New does (never overwrites). Then build on it with `apply_edits`.
@@ -44,7 +45,7 @@ Tools for Crestron SIMPL Windows. They read, check and **edit** programs. Every 
    - then compile with **F12**.
 
    Saving in SIMPL without reloading would overwrite the edit.
-   - **If SIMPL is closed, compile it yourself** with `compile_program`. It takes about a minute; SIMPL opens and closes on its own, so warn the user not to type in it meanwhile. Report SIMPL's errors, warnings and notices. If `matches_find_problems` is false, say so: it points at a SIMPL Agent rule to fix.
+   - **Compile it yourself** with `compile_program` when SIMPL is closed or was opened with `simpl_open`. It takes under a minute and never transfers the program; SIMPL opens and closes on its own. Report SIMPL's errors, warnings and notices. If `matches_find_problems` is false, say so: it points at a SIMPL Agent rule to fix.
 9. **After the user saves in SIMPL,** read the program again before the next edit. SIMPL can renumber symbols, so a stale `revision` is refused. `wait_for_simpl_save` waits for that save.
 
 ## History

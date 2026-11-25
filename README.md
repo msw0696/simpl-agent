@@ -104,7 +104,7 @@ These are built into the tools and the skill:
 | **M2** Read and check | Navigate, trace and `find_problems` | ✅ Matches SIMPL's compiler on every file compiled so far |
 | **M3** Edit and safety | `apply_edits`, write gate, history and undo, live workflow with SIMPL open | ✅ Live-tested in SIMPL 4.32 |
 | Extras | Placing macros and SIMPL+ modules; unattended compiling | ✅ |
-| **M4** Devices | Device tree, free IDs, adding devices and frames | 🔨 In progress |
+| **M4** Devices | Device tree, free IDs, adding and removing devices, frames, cards, drivers, panel joins | ✅ Matches SIMPL 4.32's own saves |
 | **M5** New programs | Start a program from scratch | ✅ `new_program`: 13 processors proven identical to SIMPL's File > New (CP3, CP3N, CP4, CP4N, PRO3, PRO4, AV4, MC3, MC4, RMC3, RMC4, DIN-AP4, MPC3-302) |
 | **M6** SIMPL+ | Write and compile SIMPL+ modules | 🔨 `splus_compile` done |
 | **M7** Touch panels | Check joins between program and panel | Later |
@@ -145,10 +145,10 @@ These are built into the tools and the skill:
 
 - **`add_module`** places macros and SIMPL+ modules, wired by pin name. The record rules were measured on 631 placed modules in the corpus. A macro and a SIMPL+ module placed in the classroom program compiled with exactly the predicted messages.
   - Not yet: SIMPL+ modules with drop-down parameters.
-- **`compile_program`** compiles in SIMPL Windows with no clicking, in about a minute, and reports SIMPL's errors, warnings, notices and any dialogs it showed. It uses [smpc](https://github.com/Norgate-AV/smpc) (MIT) through a one-time elevated scheduled task; see [Setup](#setup). It refuses while SIMPL is open.
+- **`compile_program`** compiles in SIMPL Windows with no clicking and reports SIMPL's errors, warnings, notices and any dialogs it showed. Since 2026-11-24 it opens SIMPL without admin rights and drives it by menu commands, so it works even with the screen locked and needs no elevated task. It answers only routine dialogs (load notices, commented-out symbols) and always answers No to "Transfer Program?". If SIMPL is already open as administrator it falls back to [smpc](https://github.com/Norgate-AV/smpc) (MIT) through a one-time elevated scheduled task; see [Setup](#setup).
 - SIMPL+ and SIMPL# need Microsoft **.NET Compact Framework 3.5** installed, or SIMPL gives error LGCMCVT277.
 
-### M4: Devices (in progress)
+### M4: Devices ✅ (2026-11-24)
 
 - **`device_tree`** and **`free_ids`** read the device tree and free IP IDs and Cresnet IDs.
 - **`add_device`** places a device at a free IP ID (4-Series, 3-Series, MC3 Ethernet) or Cresnet ID:
@@ -161,7 +161,10 @@ These are built into the tools and the skill:
   - `tools/prove_devices.py` and `tools/prove_frames.py` rebuild every device and frame in the 380 public programs from today's libraries. 770 device types match; 63 frames rebuild identically; 238 of 239 cards in slots rebuild identically. In modern files the only differences left are things users attach later (logic modules, HDBaseT links, replaced drivers).
   - Automatic compiles: 15 device types in one program; a DM-MD8x8, DM-NVX-36x and ST-IO together; a DM-MD8x8 with two input cards plus a DM-TX-201-C. All 0 errors, 0 warnings and 0 notices.
 - **Panels:** `wire_joins` maps joins to pins (digital first, then analog, then serial, for inputs and outputs; all 5,045 wired panel pins in modern public files fit) and grows a list's inputs and outputs together when a join is past its end. SIMPL re-saved a grown, wired TSW-1070 byte for byte, and it compiled with exactly the predicted messages.
-- **Next:** COM/IR drivers placed by users, devices with required pins, and device parameters without defaults (e.g. a TCP/IP Client's port).
+- **Parameters and pins at placement:** `add_device` takes `parameters` (by name or in order) and `connect` (pin name to signal). A device whose parameter has no default (a TCP/IP Client's Port, lighting settings) needs its value; SIMPL marks it incomplete otherwise. A TCP/IP Client with just its Port compiled cleanly.
+- **COM drivers** go on COM ports (`network` = the COM card, `address` = the port) like SIMPL's own default drivers, with their `Cm` settings record; removing the CP4N's COM 1 driver and adding one back gives the original file byte for byte.
+- **Handles:** new devices, symbols and their `Db`/`Et`/`Cm` records take the lowest unused handle, as SIMPL does after a delete.
+- **Not supported (refused with the reason):** IR drivers (they need an IR driver file from Crestron's database), one-way serial drivers on IR ports, devices whose symbols SIMPL marks incomplete until wired (Virtual Communication Port), and `new_program` for DMPS3, 2-Series and the Ethernet-only processor.
 
 ### Later
 
@@ -209,7 +212,7 @@ Optional environment variables:
 ## Development
 
 ```
-.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 188 tests (corpus tests need the local corpus)
+.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 190 tests (corpus tests need the local corpus)
 .venv\Scripts\python -m pytest                             # fast tests only
 .venv\Scripts\python -m ruff check .
 python -I tools/fetch_github_corpus.py    # download public sample programs (outside the repo)

@@ -136,7 +136,7 @@ def symbol_counts(ls: LibSymbol) -> dict[str, int]:
             "mI": sum(ins), "mO": outs[0] + outs[1], "tO": sum(outs)}
 
 
-def symbol_shape_problem(ls: LibSymbol) -> str | None:
+def symbol_shape_problem(ls: LibSymbol, given: set[str] | None = None) -> str | None:
     """Why this device symbol's fresh record can't be built yet (None if it can)."""
     f = ls.fields
     if driver_layout(ls) is not None:
@@ -151,7 +151,8 @@ def symbol_shape_problem(ls: LibSymbol) -> str | None:
             return f"its symbol has {k}, which isn't proven for devices"
     n = int(f.get("NumFixedParams") or 0)
     for i in range(1, n + 1):
-        if f.get(f"ParamCue{i}") not in PARAM_DEFAULTS and f.get(f"ParamCue{i}") != NAME_PARAM:
+        cue = f.get(f"ParamCue{i}")
+        if cue not in PARAM_DEFAULTS and cue != NAME_PARAM and (cue or "").lower() not in (given or set()):
             return f"its symbol's parameter {f.get(f'ParamCue{i}')!r} has no known default"
     return None
 
@@ -296,7 +297,7 @@ def processor_series(ed: Editor, devlib: DeviceLibrary) -> str | None:
     return "2" if "2-Series" in line and "3-Series" not in line and "4-Series" not in line else None
 
 
-def device_symbol(lib, dd: DeviceDef, series: str | None = None):
+def device_symbol(lib, dd: DeviceDef, series: str | None = None, given: set[str] | None = None):
     """The library symbol add_device would write for ``dd`` (None if it has none); EditError if it can't."""
     from .edit import EditError
 
@@ -306,10 +307,41 @@ def device_symbol(lib, dd: DeviceDef, series: str | None = None):
     ls = lib.get(code) if lib is not None else None
     if ls is None:
         raise EditError(f"{dd.name}'s logic symbol ({code}) isn't in the symbol library")
-    why = symbol_shape_problem(ls)
+    why = symbol_shape_problem(ls, given)
     if why:
-        raise EditError(f"{dd.name} can't be added yet: {why}")
+        raise EditError(f"{dd.name} can't be added yet: {why}" + (
+            "; give its value in parameters" if "no known default" in why else ""))
     return ls
+
+
+def list_sizes(ls: LibSymbol) -> tuple[list[int], list[int]]:
+    """([digital, analog, serial] input list sizes, the same for outputs) of a freshly placed device symbol."""
+    c = symbol_counts(ls)
+    n1i, n2i, n1o = c["n1I"], c["n2I"], c["n1O"]
+    n2o = c["mO"] - n1o
+    return [n1i, n2i, c["mI"] - n1i - n2i], [n1o, n2o, c["tO"] - c["mO"]]
+
+
+def pin_names(ls: LibSymbol) -> tuple[dict[str, tuple[int, str]], dict[str, tuple[int, str]]]:
+    """{pin name (lower case): (pin number, signal type)} for inputs and outputs, lists numbered straight
+    through (digital, analog, serial). '#' cues repeat (fb# -> fb1, fb2 ...). Placeholder names are left out."""
+    from ..analysis import _cue
+
+    types = ("digital", "analog", "serial")
+    ins, outs = list_sizes(ls)
+    out: list[dict[str, tuple[int, str]]] = []
+    for sizes, d in ((ins, "Input"), (outs, "Output")):
+        names: dict[str, tuple[int, str]] = {}
+        base = 0
+        for k, (n, prefix) in enumerate(zip(sizes, (f"{d}Cue", f"{d}List2Cue", f"{d}List3Cue"), strict=True)):
+            cues = ls.cues(prefix)
+            for j in range(1, n + 1):
+                name = _cue(cues, j)
+                if name and not name.startswith("[~"):
+                    names.setdefault(name.lower(), (base + j, types[k]))
+            base += n
+        out.append(names)
+    return out[0], out[1]
 
 
 def support_problem(devlib: DeviceLibrary, lib, dd: DeviceDef, series: str | None = None) -> str | None:
@@ -367,20 +399,22 @@ class _Build:
     """Records for a device and everything SIMPL puts inside it, numbered depth first."""
 
     def __init__(self, ed: Editor, devlib: DeviceLibrary, dvvr: str, smvr: str, next_sm: int,
-                 next_cm: int = 1, dv_handles: Handles | None = None, sm_handles: Handles | None = None) -> None:
+                 next_cm: int = 1, dv_handles: Handles | None = None, sm_handles: Handles | None = None,
+                 cm_handles: Handles | None = None) -> None:
         self.ed, self.devlib, self.dvvr, self.smvr = ed, devlib, dvvr, smvr
         self.sm_handles = sm_handles or Handles(next_sm)
         self.dv_handles = dv_handles  # None: count on from each device's own handle
-        self.next_cm = next_cm
+        self.cm_handles = cm_handles or Handles(next_cm)
         self.cm: list[list[tuple[str | None, str]]] = []
         self.dv: list[list[tuple[str | None, str]]] = []
         self.sm: dict[int, list[tuple[str | None, str]]] = {}
         self.devices = 0
+        self.given: set[str] = set()  # parameters the caller supplies for the top device
         self.needs_overrides = False
         self.series = processor_series(ed, devlib)
 
-    def symbol_for(self, dd: DeviceDef):
-        return device_symbol(self.ed.lib, dd, self.series)
+    def symbol_for(self, dd: DeviceDef, given: set[str] | None = None):
+        return device_symbol(self.ed.lib, dd, self.series, given)
 
     def device(self, dd: DeviceDef, *, handle: int, parent: int, address: str, slot_code: str | None,
                sym_parent: int, db: int | None = None, et: int | None = None, depth: int = 0,
@@ -393,7 +427,7 @@ class _Build:
             self.needs_overrides = True
         if depth > 8 or self.devices > 2000:
             raise EditError(f"{dd.name} nests too deeply to build")
-        ls = self.symbol_for(dd)
+        ls = self.symbol_for(dd, self.given if depth == 0 else None)
         sym = None
         if ls is not None:
             sym = self.sm_handles.take()
@@ -404,7 +438,7 @@ class _Build:
         if any(v == "Serial-Dlg" for k, v in dd.fields.items() if k.startswith("ConfigDlg")):
             settings = com_settings(slot_info or {}) or [("Tis", "1")]
         if settings is not None:
-            cm, self.next_cm = self.next_cm, self.next_cm + 1
+            cm = self.cm_handles.take()
             self.cm.append([("ObjTp", "Cm"), ("H", str(cm)), ("DvH", str(handle))] + settings)
         my_parent_sym = sym if sym is not None else sym_parent
         # A symbol's Name parameter: the device's own name, except that built-in parts (Fixed<n>) without an
@@ -478,7 +512,7 @@ def device_symbol_record(*, handle: int, ls: LibSymbol, smvr: str, device: int, 
     if n:
         lines.append(("mP", str(n)))
         lines += [(f"P{i}", (name_param or comment) if f[f"ParamCue{i}"] == NAME_PARAM
-                   else PARAM_DEFAULTS[f[f"ParamCue{i}"]])
+                   else PARAM_DEFAULTS.get(f[f"ParamCue{i}"], ""))
                   for i in range(1, n + 1)]
     return lines
 
@@ -490,6 +524,62 @@ def _unique_devices(ed: Editor) -> list[Device]:
             seen.add(id(d))
             out.append(d)
     return out
+
+
+def _apply_params_and_pins(ed: Editor, lines: list, ls: LibSymbol, parameters, connect) -> None:
+    """Set the device symbol's parameters (by name or in order) and wire pins by name; ``lines`` is
+    rewritten in place in SIMPL's key order."""
+    from .edit import EditError
+    from .joins import _rewrite
+
+    f = ls.fields
+    n = int(f.get("NumFixedParams") or 0)
+    rec = Record(lines=list(lines))
+    cues = [f.get(f"ParamCue{i}") or f"p{i}" for i in range(1, n + 1)]
+    if parameters is not None:
+        if isinstance(parameters, list):
+            if len(parameters) > n:
+                raise EditError(f"{f.get('Name')} has {n} parameters, got {len(parameters)}")
+            values = {i + 1: str(v) for i, v in enumerate(parameters)}
+        elif isinstance(parameters, dict):
+            byname = {c.lower(): i + 1 for i, c in enumerate(cues)}
+            values = {}
+            for k, v in parameters.items():
+                if str(k).lower() not in byname:
+                    raise EditError(f"{f.get('Name')} has no parameter {k!r}; its parameters are {cues}")
+                values[byname[str(k).lower()]] = str(v)
+        else:
+            raise EditError("parameters must be a list or {name: value}")
+        for i, v in values.items():
+            if "\r" in v or "\n" in v:
+                raise EditError("parameter values must be one line")
+            rec.set(f"P{i}", v)
+    if connect:
+        if not isinstance(connect, dict):
+            raise EditError("connect must map pin names to signal names")
+        in_names, out_names = pin_names(ls)
+        ins, outs = list_sizes(ls)
+        ipins: dict[int, str] = {}
+        opins: dict[int, str] = {}
+        for pin, sig in connect.items():
+            key = str(pin).lower()
+            if key in in_names:
+                num, typ = in_names[key]
+                h = ed.signal_for(sig, create_type=typ)
+                ipins[num] = str(h)
+            elif key in out_names:
+                num, typ = out_names[key]
+                h = ed.signal_for(sig, create_type=typ)
+                ed.check_can_drive(h, ls)
+                opins[num] = str(h)
+            else:
+                raise EditError(f"{f.get('Name')} has no pin {pin!r}; inputs {sorted(in_names)[:12]}, "
+                                f"outputs {sorted(out_names)[:12]}")
+            sg = ed.prog.signals.get(h)
+            if sg is not None and sg.record is not None and sg.type != typ:
+                raise EditError(f"pin {pin} takes a {typ} signal, but {sg.name!r} is {sg.type}")
+        _rewrite(rec, ins, outs, ipins, opins)
+    lines[:] = rec.lines
 
 
 def _insert_sorted(ed: Editor, rec: Record, obj_type: str, after_types: tuple[str, ...]) -> None:
@@ -539,7 +629,8 @@ def find_device_def(devlib: DeviceLibrary, ref: str | int) -> DeviceDef:
 
 
 def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: str | int,
-               network: str | int | None = None) -> int:
+               network: str | int | None = None, parameters: dict | list | None = None,
+               connect: dict | None = None) -> int:
     """Place ``device`` at ``address`` on a network. Returns the device's symbol handle."""
     from .edit import EditError
 
@@ -589,6 +680,11 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
         raise EditError(f"address {addr} is already used by {used.name if used else '?'}")
     if on_network:
         slot_code, with_db = None, True
+    elif rule is None and (devlib.slots.get(slot.name or "") or {}).get("Transport") == "COM":
+        # A driver on a COM port: written like the drivers SIMPL drops into COM ports itself (the port's SlC,
+        # a Cm settings record, no Db; SIMPL 4.32's new programs and its NVX/CEN-IO-COM defaults, f12-round8).
+        rule = {"slc": True, "db": False}
+        slot_code, with_db = slot.record.get("SlC"), False
     elif rule is None and slot.name in SLOT_TYPE_RULES:
         rule = SLOT_TYPE_RULES[slot.name]
         slot_code = slot.record.get("SlC") if rule["slc"] else None
@@ -602,7 +698,13 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
     if container.symbol is None or container.symbol not in ed.prog.symbols:
         raise EditError(f"network {container.name} has no logic symbol to put the device under")
 
-    _Build(ed, devlib, "", "", 0).symbol_for(dd)  # refuse unsupported symbols before changing anything
+    given = {str(k).lower() for k in parameters} if isinstance(parameters, dict) else set()
+    if isinstance(parameters, list):
+        top_ls = ed.lib.get(symbol_code_for(dd, processor_series(ed, devlib)) or -1) if ed.lib else None
+        n = int(top_ls.fields.get("NumFixedParams") or 0) if top_ls else 0
+        given = {(top_ls.fields.get(f"ParamCue{i}") or "").lower() for i in range(1, min(n, len(parameters)) + 1)}
+    # refuse unsupported symbols before changing anything
+    top_ls = device_symbol(ed.lib, dd, processor_series(ed, devlib), given)
     hd = ed.prog.header
     smvr = (hd.get("SmVr") if hd is not None else None) or ""
     dvvr = slot.record.get("DvVr") or ""
@@ -644,10 +746,14 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
 
         # 2. The device and everything SIMPL puts inside it, numbered depth first.
         sm_handles = Handles(1, {int(r.get("H")) for r in ed.raw.of_type("Sm") if (r.get("H") or "").isdigit()})
-        db_h = ed._next_handle("Db") if with_db else None
-        et_h = ed._next_handle("Et") if dd.fields.get("DefaultIP") and on_network else None
-        b = _Build(ed, devlib, dvvr, smvr, 0, next_cm=ed._next_handle("Cm"), dv_handles=dv_handles,
+        def lowest_free(obj_type: str) -> Handles:
+            return Handles(1, {int(r.get("H")) for r in ed.raw.of_type(obj_type) if (r.get("H") or "").isdigit()})
+
+        db_h = lowest_free("Db").take() if with_db else None
+        et_h = lowest_free("Et").take() if dd.fields.get("DefaultIP") and on_network else None
+        b = _Build(ed, devlib, dvvr, smvr, 0, cm_handles=lowest_free("Cm"), dv_handles=dv_handles,
                    sm_handles=sm_handles)
+        b.given = given
         _, top_syms = b.device(dd, handle=dev_h, parent=hs[i], address=addr, slot_code=slot_code,
                                sym_parent=container.symbol, slot_info=devlib.slots.get(slot.name or "") or {},
                                db=db_h, et=et_h)
@@ -656,7 +762,7 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
             _insert_dv_sorted(ed, Record(lines=lines))
 
         for lines in b.cm:
-            ed._insert_record(Record(lines=lines), "Cm", after_types=("Dv",))
+            _insert_sorted(ed, Record(lines=lines), "Cm", after_types=("Dv",))
 
         # 3. Companions: Db (and Et when the device has a default IP).
         if db_h is not None:
@@ -666,16 +772,20 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
             # corpus; SIMPL 4.32 wrote it for a DM-MD8x8, not for its cards or 8 other devices, f12-round8).
             if on_network and dd.fields.get("RequiresOverrides") == "True" and dd.fields.get("Hint"):
                 db_lines.append(("Tpe", dd.fields["Hint"]))
-            ed._insert_record(Record(lines=db_lines), "Db", after_types=("Dv", "Cm"))
+            _insert_sorted(ed, Record(lines=db_lines), "Db", after_types=("Dv", "Cm"))
         if et_h is not None:
-            ed._insert_record(Record(lines=[("ObjTp", "Et"), ("H", str(et_h)), ("DvH", str(dev_h)),
-                                            ("IPM", "255.255.255.0"), ("IPA", dd.fields["DefaultIP"])]),
-                              "Et", after_types=("Dv", "Cm", "Db", "Cs", "Bk", "Bw"))
+            _insert_sorted(ed, Record(lines=[("ObjTp", "Et"), ("H", str(et_h)), ("DvH", str(dev_h)),
+                                             ("IPM", "255.255.255.0"), ("IPA", dd.fields["DefaultIP"])]),
+                           "Et", after_types=("Dv", "Cm", "Db", "Cs", "Bk", "Bw"))
 
         # A device with DM label overrides makes SIMPL add LabelOverrideStatus=2 at the end of the
         # header (3 of 3 such corpus programs, 0 of 63 others; SIMPL 4.32 save, f12-round8).
         if b.needs_overrides and hd is not None and hd.get("LabelOverrideStatus") is None:
             hd.lines.append(("LabelOverrideStatus", "2"))
+
+        # Parameters and pins the caller gave, on the device's own symbol.
+        if (parameters or connect) and top_ls is not None:
+            _apply_params_and_pins(ed, b.sm[sm_h], top_ls, parameters, connect)
 
         # 4. Logic symbols, in handle order.
         for h in sorted(b.sm):

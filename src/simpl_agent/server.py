@@ -731,21 +731,29 @@ class Tools(EditTools):
         p, data, prog = self._read_program(path)
         if p.suffix.lower() != ".smw":
             raise ToolError("only programs (.smw) can be compiled")
-        if not cmp.installed():
-            raise ToolError("automatic compiling isn't set up on this PC; ask the user to press F12 in SIMPL")
-        if self.windows():
-            raise ToolError("SIMPL Windows is open. The compile drives SIMPL's window, so ask the user to close "
-                            "SIMPL first (or to press F12 themselves).")
         before = hashlib.sha256(data).hexdigest()
+        st = self.live.status(p)
+        use_live = bool(st.get("controllable")) or not self.windows()
+        if not use_live:
+            if not cmp.installed():
+                raise ToolError("automatic compiling isn't set up on this PC; ask the user to press F12 in SIMPL")
+            raise ToolError("SIMPL Windows is open (as administrator, or on another program). Ask the user to close "
+                            "it, or to press F12 themselves; programs opened with simpl_open can be compiled in place.")
         try:
             lib = self.index().library
         except ToolError:
             lib = None
         predicted = {(x.code, x.message) for x in an.find_problems(prog, lib)}
+        timeout = max(60, min(int(timeout_s), 3600))
         try:
-            r = cmp.compile_program(p, timeout_s=max(60, min(int(timeout_s), 3600)))
-        except cmp.CompileError as e:
-            raise ToolError(str(e)) from e
+            r = self._compile_live(p, st, timeout)
+        except RuntimeError as e:
+            if not cmp.installed():
+                raise ToolError(f"couldn't compile through SIMPL: {e}") from e
+            try:
+                r = cmp.compile_program(p, timeout_s=timeout)
+            except cmp.CompileError as e2:
+                raise ToolError(str(e2)) from e2
         got = {(m["code"], m["message"]) for m in r["messages"]}
         after = hashlib.sha256(p.read_bytes()).hexdigest()
         failed = "incomplete symbols" in r["output"] or (r["exit_code"] not in (0, None) and not r["messages"])
@@ -767,6 +775,43 @@ class Tools(EditTools):
                      "it may be a SIMPL Agent rule to fix."),
             **({"output": r["output"][-3000:]} if failed else {}),
         }
+
+    def _compile_live(self, p: Path, st: dict, timeout: int) -> dict[str, Any]:
+        """Compile through a SIMPL without admin rights, by menu command (works with the screen locked).
+        Opens SIMPL for it (and closes it after) unless it already has the program open."""
+        from .compile import parse_output
+
+        opened = False
+        if not st.get("open"):
+            pid = self.live.launch(p)
+            opened = True
+            problem = None
+            for _ in range(90):
+                time.sleep(1)
+                if self.live.find(p):
+                    break
+                # SIMPL shows "Operation Complete" (Problems Loading Program / Fatal Errors) if it can't load it.
+                if any(w[1] == pid and w[2] == "Operation Complete" for w in self.live._windows()):
+                    problem = "SIMPL couldn't load the program (Problems Loading Program)"
+                    break
+            else:
+                problem = "SIMPL didn't open the program"
+            if problem:
+                subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)  # the SIMPL we started
+                raise RuntimeError(problem)
+            time.sleep(3)
+        try:
+            res = self.live.compile_open(p, timeout_s=timeout)
+        finally:
+            if opened:
+                self.live.close(p)
+        parsed = parse_output(res["summary"] + "\n" + "\n".join(res["lines"]))
+        incomplete = any("incomplete symbols" in d["title"].lower() for d in res["dialogs"])
+        output = "\n".join([res["summary"], *res["lines"], *(f"{d['title']}: {d['text']}" for d in res["dialogs"])])
+        return {"exit_code": 0 if res["finished"] else 1, **parsed,
+                "dialogs_seen": [f"{d['title']}: {d['text']}" for d in res["dialogs"]],
+                "dialogs_auto_confirmed": res.get("auto", []),
+                "output": output + ("\nincomplete symbols" if incomplete else "")}
 
     def module_details(self, path: str, module: str) -> dict[str, Any]:
         """A macro's or SIMPL+ module's pins and parameters, as SIMPL would place it in ``path``."""
@@ -905,7 +950,8 @@ def create_server(tools: Tools | None = None) -> Any:
                  "set_comment {symbol, text}; add_module {module (file name, e.g. 'X.umc'/'X.usp'), folder, "
                  "connect {pin name: signal}, parameters [...] or {name: value}, comment?, new_signal_type?}; "
                  "add_device {device (exact name or code), address (IP ID the user chose, e.g. '03', or a "
-                 "frame's slot number), network? (or the frame '#handle' for a card)} (see free_ids); "
+                 "frame's slot number), network? (or the frame '#handle' for a card), parameters? [...] or "
+                 "{name: value}, connect? {pin name: signal}} (see free_ids); "
                  "remove_device {device ('#handle' from device_tree)}; "
                  "wire_joins {symbol (a panel or EISC symbol '#h'), joins [{type digital|analog|serial, join n, "
                  "in? (signal into it, e.g. feedback), out? (signal it drives, e.g. press)}]} (lists grow as needed); "
@@ -923,10 +969,12 @@ def create_server(tools: Tools | None = None) -> Any:
     async def module_details(path: str, module: str) -> dict[str, Any]:
         return await _run("module_details", path=path, module=module)
 
-    @server.tool(name="compile_program", description="Compile the program in SIMPL Windows (about a minute; "
+    @server.tool(name="compile_program", description="Compile the program in SIMPL Windows, never transferring "
+                 "it (opens SIMPL without admin rights, or uses the one simpl_open started; works with the screen "
+                 "locked; "
                  "SIMPL opens and closes by itself) and return SIMPL's errors, warnings and notices, compared "
-                 "with find_problems. Needs SIMPL to be closed and the compile task installed. Use it after "
-                 "apply_edits instead of asking the user to press F12.")
+                 "with find_problems. If SIMPL is open as administrator, ask the user to close it first. Use it "
+                 "after apply_edits instead of asking the user to press F12.")
     async def compile_program(path: str, timeout_s: int = 1500) -> dict[str, Any]:
         return await _run("compile_program", path=path, timeout_s=timeout_s)
 

@@ -36,7 +36,7 @@ OP_KEYS: dict[str, tuple[set[str], set[str]]] = {
     "add_symbol": ({"symbol", "folder", "inputs", "outputs"}, {"parameters", "comment", "new_signal_type"}),
     "add_folder": ({"name"}, {"parent"}),
     "add_module": ({"module", "folder"}, {"connect", "parameters", "comment", "new_signal_type"}),
-    "add_device": ({"device", "address"}, {"network"}),
+    "add_device": ({"device", "address"}, {"network", "parameters", "connect"}),
     "remove_device": ({"device"}, set()),
     "wire_joins": ({"symbol", "joins"}, set()),
     "connect": ({"symbol", "pin"}, {"signal", "new_signal_type"}),
@@ -144,7 +144,8 @@ class EditTools:
             devlib = self._device_library()
             if devlib is None:
                 raise EditError("SIMPL's device library (iodev.tio) isn't available")
-            ed.add_device(devlib, e["device"], e["address"], e.get("network"))
+            ed.add_device(devlib, e["device"], e["address"], e.get("network"), parameters=e.get("parameters"),
+                          connect=e.get("connect"))
         elif op == "wire_joins":
             ed.wire_joins(e["symbol"], e["joins"])
         elif op == "remove_device":

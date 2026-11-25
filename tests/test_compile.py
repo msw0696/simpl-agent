@@ -31,18 +31,35 @@ def test_parse_output() -> None:
     assert r["messages"][3]["code"] == "LGCMCVT103" and r["messages"][1]["code"] == "108"
 
 
+class NoLiveSimpl:
+    """Tests never start a real SIMPL: the live link reports no SIMPL and can't launch one."""
+
+    @staticmethod
+    def status(p):
+        return {"open": False, "controllable": False}
+
+    @staticmethod
+    def find(p):
+        return None
+
+    @staticmethod
+    def launch(p):
+        raise RuntimeError("no SIMPL in tests")
+
+
 def test_compile_tool_refusals(tmp_path: Path, tiny: bytes, monkeypatch: pytest.MonkeyPatch) -> None:
     from simpl_agent.server import Tools
 
     p = tmp_path / "x.smw"
     p.write_bytes(tiny)
     t = Tools(library_path=tmp_path / "missing.tio", home=tmp_path / "home")
+    t.live = NoLiveSimpl()
     monkeypatch.setattr(cmp, "installed", lambda: False)
     t.windows = lambda: []
-    assert "isn't set up" in t.call("compile_program", {"path": str(p)})["error"]
+    assert "couldn't compile through SIMPL" in t.call("compile_program", {"path": str(p)})["error"]
     monkeypatch.setattr(cmp, "installed", lambda: True)
     t.windows = lambda: ["SIMPL Windows - other.smw ( C:\\x\\other.smw)"]
-    assert "close SIMPL" in t.call("compile_program", {"path": str(p)})["error"]
+    assert "Ask the user to close it" in t.call("compile_program", {"path": str(p)})["error"]
 
 
 def test_compile_tool_compares_with_find_problems(tmp_path: Path, tiny: bytes,
@@ -52,6 +69,7 @@ def test_compile_tool_compares_with_find_problems(tmp_path: Path, tiny: bytes,
     p = tmp_path / "x.smw"
     p.write_bytes(tiny)
     t = Tools(library_path=tmp_path / "missing.tio", home=tmp_path / "home")
+    t.live = NoLiveSimpl()  # falls back to the (faked) smpc task
     t.windows = lambda: []
     monkeypatch.setattr(cmp, "installed", lambda: True)
     fake = ('Warning messages:\n  1. WARNING\t(LGCMCVT102) ** Signal "room_enable" has no driving source.\n'

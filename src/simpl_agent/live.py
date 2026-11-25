@@ -7,6 +7,8 @@ and takes plain window messages, with no clicking and even while the screen is l
 - WM_COMMAND with the File > Save menu item's ID saves the program;
 - after the file changes on disk, WM_ACTIVATEAPP makes SIMPL check it and ask (a "Crestron SIMPL
   Windows" Yes/No box) whether to reload; BM_CLICK on Yes reloads it.
+- Project > Convert/Compile by its menu ID compiles; SIMPL then shows "Compile Complete" (a summary and
+  "Transfer Program?" Yes/No, always answered No) and lists its messages in "Program Compilation".
 Nothing here sends anything to a processor; the Transfer menu is never used.
 """
 from __future__ import annotations
@@ -210,3 +212,142 @@ def launch(path: Path | None = None) -> int:
     args = [str(SMPWIN)] + ([str(Path(path).resolve())] if path else [])
     proc = subprocess.Popen(args, env=env, close_fds=True, creationflags=0x00000008)  # DETACHED_PROCESS
     return proc.pid
+
+
+def _child_texts(hwnd: int) -> list[tuple[int, str, str]]:
+    """(child hwnd, class, text) of a dialog. WM_GETTEXT works across processes where GetWindowText doesn't."""
+    u = _user32()
+    out: list[tuple[int, str, str]] = []
+    cb_t = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def cb(ch, _):
+        cls = ctypes.create_unicode_buffer(64)
+        u.GetClassNameW(ch, cls, 64)
+        n = u.SendMessageW(ch, 0x000E, 0, 0)  # WM_GETTEXTLENGTH
+        buf = ctypes.create_unicode_buffer(n + 1)
+        u.SendMessageW(ch, 0x000D, n + 1, buf)  # WM_GETTEXT
+        out.append((ch, cls.value, buf.value))
+        return True
+
+    u.EnumChildWindows(hwnd, cb_t(cb), 0)
+    return out
+
+
+def _list_lines(hwnd: int) -> list[str]:
+    u = _user32()
+    lines: list[str] = []
+    for ch, cls, _ in _child_texts(hwnd):
+        if cls.lower() == "listbox":
+            for i in range(u.SendMessageW(ch, 0x018B, 0, 0)):  # LB_GETCOUNT
+                n = u.SendMessageW(ch, 0x018A, i, 0)  # LB_GETTEXTLEN
+                buf = ctypes.create_unicode_buffer(max(n, 0) + 1)
+                u.SendMessageW(ch, 0x0189, i, buf)  # LB_GETTEXT
+                lines.append(buf.value)
+    return lines
+
+
+ROUTINE = {"Compiling...", "Program Compilation", "Compile Complete"}
+
+
+def _handle_known(h: int, title: str, texts: list[tuple[int, str, str]], auto: list[str]) -> bool:
+    """Answer the routine dialogs SIMPL shows around a compile (as smpc does). True if handled."""
+    u = _user32()
+    b = {t.replace("&", "").strip(): ch for ch, c, t in texts if c.lower() == "button" and t.strip()}
+    body = " ".join(t.strip() for _, c, t in texts if c.lower() in ("static", "edit") and t.strip())
+    if title == "Commented out Symbols and/or Devices" and "Yes" in b:
+        u.SendMessageW(b["Yes"], BM_CLICK, 0, 0)  # compile without the commented-out parts, as SIMPL normally does
+        auto.append("Commented out Symbols and/or Devices -> Yes (continue)")
+        return True
+    if title == "Operation Complete" and "Skip Details" in b:
+        if "error" in body.lower() or "fatal" in body.lower():
+            return False  # a real loading problem: report it
+        u.SendMessageW(b["Skip Details"], BM_CLICK, 0, 0)
+        auto.append(f"Operation Complete ({body}) -> Skip Details")
+        return True
+    return False
+
+
+def compile_open(path: Path, timeout_s: float = 600) -> dict:
+    """Compile the program SIMPL has open (it must run without admin rights). Returns the summary text,
+    SIMPL's message lines, dialogs it answered (routine ones only; Transfer Program? is always No), any
+    other dialogs (reported, never answered beyond a plain OK), and whether it finished."""
+    hit = find(path)
+    if hit is None or is_elevated(hit[1]) is not False:
+        raise RuntimeError("SIMPL doesn't have this program open without admin rights")
+    hwnd, pid = hit
+    cmd = _menu_id(hwnd, ("project", "convert/compile"))
+    if cmd is None:
+        raise RuntimeError("SIMPL's Convert/Compile menu item wasn't found")
+    u = _user32()
+    auto: list[str] = []
+    other: list[dict] = []
+    summary = None
+
+    def scan() -> None:
+        nonlocal summary
+        for h, p2, title in _windows():
+            if p2 != pid or h == hwnd or title.startswith("SIMPL Windows"):
+                continue
+            if title in ("Compiling...", "Program Compilation"):
+                continue
+            texts = _child_texts(h)
+            if title == "Compile Complete":
+                summary = "\n".join(t for _, c, t in texts if c.lower() == "edit")
+                b = {t: ch for ch, c, t in texts if c.lower() == "button"}
+                if "&No" in b:
+                    u.SendMessageW(b["&No"], BM_CLICK, 0, 0)  # never Transfer Program
+                continue
+            if _handle_known(h, title, texts, auto):
+                continue
+            # Anything else (e.g. "Incomplete Symbols"): report it. Only a box whose one button is OK (just
+            # information) is dismissed, so SIMPL isn't left waiting; questions are never answered.
+            other.append({"title": title, "text": " ".join(t.strip() for _, c, t in texts
+                                                              if c.lower() in ("static", "edit") and t.strip())})
+            b = {t.replace("&", ""): ch for ch, c, t in texts if c.lower() == "button" and t.strip()}
+            if set(b) == {"OK"}:
+                u.SendMessageW(b["OK"], BM_CLICK, 0, 0)
+
+    # Dialogs left over from loading the program come first.
+    for _ in range(6):
+        scan()
+        if other:
+            return {"finished": False, "summary": "", "lines": [], "dialogs": other, "auto": auto}
+        time.sleep(0.5)
+    u.PostMessageW(hwnd, WM_COMMAND, cmd, 0)
+    end = time.monotonic() + timeout_s
+    while time.monotonic() < end and summary is None and not other:
+        time.sleep(0.5)
+        scan()
+    lines: list[str] = []
+    time.sleep(0.5)
+    for h, p2, title in _windows():
+        if p2 == pid and title == "Program Compilation":
+            lines = _list_lines(h)
+            close_btn = {t: ch for ch, c, t in _child_texts(h) if c.lower() == "button"}.get("Close")
+            if close_btn:
+                u.SendMessageW(close_btn, BM_CLICK, 0, 0)
+    if summary is not None:
+        auto.append("Transfer Program? -> No")
+    return {"finished": summary is not None, "summary": summary or "", "lines": lines, "dialogs": other,
+            "auto": auto}
+
+
+def close(path: Path, timeout_s: float = 15) -> bool:
+    """Close SIMPL (the window that has ``path`` open), answering No to any save prompt."""
+    hit = find(path)
+    if hit is None:
+        return True
+    hwnd, pid = hit
+    u = _user32()
+    u.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
+    end = time.monotonic() + timeout_s
+    while time.monotonic() < end:
+        time.sleep(0.4)
+        wins = [w for w in _windows() if w[1] == pid]
+        if not wins:
+            return True
+        for h, _, title in wins:
+            b = _buttons(h)
+            if title == PROMPT_TITLE and "&No" in b:
+                u.SendMessageW(b["&No"], BM_CLICK, 0, 0)
+    return False

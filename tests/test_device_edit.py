@@ -385,3 +385,30 @@ def test_output_cards_match_simpl(libs) -> None:
     assert same_except_name(ed.raw.to_bytes(), (DATA / "outs-step2.smw").read_bytes())
     ed.add_device(libs[1], "DMCO-22", 17, network="#589")
     assert same_except_name(ed.raw.to_bytes(), (DATA / "outs-step3.smw").read_bytes())
+
+
+def test_parameters_and_pins_by_name(libs) -> None:
+    """A TCP/IP Client needs its Port; with it, SIMPL compiles it (round 8, compiled through SIMPL itself).
+    Pins are wired by name across its digital/analog/serial lists."""
+    ed = editor(libs)
+    with pytest.raises(EditError, match="give its value in parameters"):
+        ed.add_device(libs[1], "TCP/IP Client", "05")
+    sym = ed.add_device(libs[1], "TCP/IP Client", "05", parameters={"Port": "23d"},
+                        connect={"Connect": "Proj_Connect", "TX$": "Proj_TX$", "status": "Proj_Status"})
+    r = ed.prog.symbols[sym].record
+    names = {h: s for h, s in ed.prog.signals.items()}
+    assert r.get("P1") == "23d" and r.get("SmC") == "3166"  # the 3/4-Series symbol (SymbolCode6)
+    assert names[int(r.get("I1"))].name == "Proj_Connect" and names[int(r.get("I4"))].type == "serial"
+    assert names[int(r.get("O2"))].type == "analog"
+    assert structural_problems(ed.prog) == set()
+    with pytest.raises(EditError, match="has no pin"):
+        ed.add_device(libs[1], "TCP/IP Client", "06", parameters={"Port": "23d"}, connect={"Bogus": "x"})
+
+
+def test_com_driver_remove_and_add_back_is_exact(libs) -> None:
+    """A driver on a COM port is written like SIMPL's own default drivers; removing the CP4N's COM 1 driver
+    and adding one back gives the original file (freed handles, Cm record included)."""
+    ed = editor(libs)
+    ed.remove_device(libs[1], "#518")
+    ed.add_device(libs[1], "COM 2-Way Serial Driver", 1, network="#516")
+    assert ed.raw.to_bytes() == (DATA / "dev-step0.smw").read_bytes()

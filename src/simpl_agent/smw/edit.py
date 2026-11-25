@@ -688,11 +688,12 @@ class Editor:
             rec.set("mC", "1", after=anchor)
             rec.set("C1", str(child), after="mC")
 
-    def add_device(self, devlib, device: str | int, address: str | int, network: str | int | None = None) -> int:
+    def add_device(self, devlib, device: str | int, address: str | int, network: str | int | None = None,
+                   parameters: dict | list | None = None, connect: dict | None = None) -> int:
         """Place a device at a free address (IP ID) on a network; see device_edit.py."""
         from .device_edit import add_device
 
-        return add_device(self, devlib, device, address, network)
+        return add_device(self, devlib, device, address, network, parameters=parameters, connect=connect)
 
     def wire_joins(self, symbol: str | int, joins: list[dict]) -> list[str]:
         """Connect a panel's or EISC's joins by type and number; see joins.py."""
