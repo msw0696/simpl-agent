@@ -52,9 +52,42 @@ def parse_output(text: str) -> dict:
     return targets
 
 
+def fix_line_endings(path: Path) -> bool:
+    """Give a .usp CRLF line endings; True if it changed.
+
+    SPlusCC needs them: in a file with bare LF line endings a ``//`` comment runs on to the next
+    CR, so everything after the first one is silently dropped and the module compiles "clean"
+    with no pins or code (SPlusCC 4.06, 2026-11-25; BOM, UTF-8 text and CR-only were fine).
+    """
+    data = Path(path).read_bytes()
+    fixed = re.sub(rb"\r?\n", b"\r\n", data)
+    if fixed == data:
+        return False
+    Path(path).write_bytes(fixed)
+    return True
+
+
+def module_pins(ush: Path) -> dict | None:
+    """The pins and parameters SIMPL will show for a compiled module, read from its .ush."""
+    from .analysis import SPLUS_CODE, _module_fields, module_layout
+    from .catalog.symlib import LibSymbol
+
+    fields = _module_fields(str(ush))
+    if fields is None:
+        return None
+    lay = module_layout(SPLUS_CODE, LibSymbol(code=SPLUS_CODE, name=fields.get("Name", ""), fields=fields))
+
+    def pins(rows: list) -> list[dict]:
+        return [{"pin": n, "name": nm, **({"type": t} if t else {})} for n, nm, t in rows]
+
+    return {"symbol_name": fields.get("Name", ""), "inputs": pins(lay["inputs"]), "outputs": pins(lay["outputs"]),
+            "parameters": pins(lay["parameters"])}
+
+
 def compile_module(path: Path, targets: list[str], timeout_s: int = 600, exe: Path = SPLUSCC) -> dict:
-    """Run SPlusCC on one .usp and return the parsed result."""
+    """Run SPlusCC on one .usp and return the parsed result (fixing its line endings first)."""
     path = Path(path)
+    crlf_fixed = fix_line_endings(path)
     ush = path.with_suffix(".ush")
     before = ush.stat().st_mtime if ush.exists() else None
     # One command-line string: SPlusCC reads its own switches ('\\rebuild', '\\target').
@@ -68,6 +101,9 @@ def compile_module(path: Path, targets: list[str], timeout_s: int = 600, exe: Pa
     errors = sum(t["errors"] for t in per_target.values())
     warnings = sum(t["warnings"] for t in per_target.values())
     after = ush.stat().st_mtime if ush.exists() else None
+    written = after is not None and after != before
     return {"compiled": errors == 0 and bool(per_target), "exit_code": r.returncode, "errors": errors,
             "warnings": warnings, "targets": per_target,
-            "ush_written": after is not None and after != before, "ush": str(ush) if ush.exists() else None}
+            "ush_written": written, "ush": str(ush) if ush.exists() else None,
+            **({"line_endings_fixed": True} if crlf_fixed else {}),
+            **({"module": pins} if written and (pins := module_pins(ush)) is not None else {})}

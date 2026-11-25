@@ -206,6 +206,35 @@ def reload(path: Path, timeout_s: float = 15) -> bool:
     return False
 
 
+def process_start(pid: int) -> float | None:
+    """When process ``pid`` started, as a Unix time; None if it can't be read."""
+    k = ctypes.windll.kernel32
+    h = k.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return None
+    try:
+        t = [wintypes.FILETIME() for _ in range(4)]
+        if not k.GetProcessTimes(h, *(ctypes.byref(x) for x in t)):
+            return None
+        ticks = (t[0].dwHighDateTime << 32) | t[0].dwLowDateTime  # 100 ns since 1601
+        return ticks / 1e7 - 11644473600
+    finally:
+        k.CloseHandle(h)
+
+
+def wait_until_open(path: Path, pid: int | None = None, timeout_s: float = 180) -> bool:
+    """Wait for SIMPL to finish loading ``path`` (it can take a minute or more). False on timeout
+    or if the SIMPL that was started has exited."""
+    end = time.monotonic() + timeout_s
+    while time.monotonic() < end:
+        if find(path):
+            return True
+        if pid is not None and not any(w[1] == pid for w in _windows()) and _image_name(pid) == "":
+            return False
+        time.sleep(1)
+    return False
+
+
 def launch(path: Path | None = None) -> int:
     """Start SIMPL without administrator rights (so the live link works). Returns its pid."""
     env = dict(os.environ, __COMPAT_LAYER="RunAsInvoker")

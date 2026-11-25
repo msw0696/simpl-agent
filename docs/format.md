@@ -295,6 +295,17 @@ ebuild <file.usp> 	arget series3 series4` (one command-line string; no window, n
 - **Round 8 compile:** a DM-MD8x8 (empty card slots), a DM-NVX-36x (23 devices inside) and an ST-IO in one CP4N compiled 0/0/0.
 - **Round 7 (automatic compiles):** 18 device types in one CP4N gave "Incomplete Symbols". The three without `CheckCnx=random` (CEN-RGBHV8x4, CEN-RGBHV16x16, Virtual Communication Port) have required pins; without them, 15 types (13 Ethernet including XPanels, TSW-760/1050/1060, TPMC-12, packed and 3-Series EISCs, e-control, e-server, SW-WMC; 2 Cresnet: CNX-B8, TPMC-9) compiled with 0 errors, 0 warnings and 0 notices.
 
+### SIMPL+ modules end to end (M6, 2026-11-25)
+
+A module written for the conference-room test program (`DisplayFeedback.usp`: `BUFFER_INPUT Rx$`, two digital outputs) went the whole way: `splus_compile`, `add_module` (COM 1's `rx$` to the module, its outputs to panel joins 3 and 4), then a compile in SIMPL with 0 errors, warnings and notices. A freshly started SIMPL re-saved the program byte for byte.
+
+- **Line endings:** SPlusCC (4.06) needs CRLF. With bare LF, a `//` comment runs on to the next CR, so everything after the first one is dropped and the module "compiles" clean with no pins or code. A BOM, UTF-8 text, CR-only and comment-free LF files were fine. `splus_compile` converts the file to CRLF first.
+- **The `.ush`** SPlusCC writes beside the `.usp` holds the module's `Symbol` record: `Name` (from `#SYMBOL_NAME`), `SymbolTree` (from `#CATEGORY`), cues and `MinVariable*` per list (digital first list; analog and serial in list 2; here `Rx$` is `InputList2`), and `ParamCue1=[Reference Name]`. A placed module with a blank `P1` and `CF=2` is normal (1,028 of 1,103 placed SIMPL+ modules in the public corpus).
+- **SIMPL keeps a module build:** a SIMPL that read a module's earlier (empty) build kept it after the `.ush` was rewritten and after reloading the program: it marked the corrected module incomplete (`CF=1` on it and its folders when saved) and refused to compile. A freshly started SIMPL compiled the same file clean. `compile_program` therefore saves and restarts a SIMPL started before any of the program's `.ush` files were written.
+- **`#CATEGORY` IDs** are the symbol library's `SymbolTree` codes (6 Lighting, 32 Miscellaneous, 46 Custom ...); an unknown ID falls back to Miscellaneous (per the SIMPL+ help).
+- **Program ID Tags:** SIMPL's Edit Program Header suggests the names in `Cresdb\Programming\ProgramIDTags.ini` (Audio_Distribution, AV, HVAC, Lighting, Main, Security, Theater, Video_Distribution).
+- **Reference:** `Simpl+lr.chm` (the SIMPL+ Language Reference) unpacks with `hh.exe -decompile` (which fails silently on paths with spaces) into 526 pages: functions, declarations, directives, events, and one page per compiler error and warning; the pages are cp1252.
+
 ## 8. Still to learn
 **From the F12 test set (`tools/make_f12_samples.py`):**
 - Whether SIMPL 4.32 loads and compiles our records without complaint (files 01, 02, 11).

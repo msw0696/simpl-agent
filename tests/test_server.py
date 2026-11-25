@@ -163,7 +163,7 @@ def test_stdio_round_trip(tmp_path: Path, program: Path) -> None:
             return {t.name for t in listed.tools}, payload, init.instructions
 
     names, payload, instructions = anyio.run(run)
-    assert names == set(TOOL_NAMES) and len(names) == 24
+    assert names == set(TOOL_NAMES) and len(names) == 25
     assert payload["ok"] and payload["processor"] == "TestProc"
     assert instructions == INSTRUCTIONS
     log = (tmp_path / "home" / "audit.jsonl").read_text("utf-8")

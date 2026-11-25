@@ -1,6 +1,6 @@
 ---
 name: simpl-agent
-description: Read, explain, check, edit and compile Crestron SIMPL Windows programs (.smw) through the SIMPL Agent MCP server (simpl_agent_status, describe_program, folder_tree, list_folder, show_symbol, find_signals, follow_signal, find_problems, apply_edits, module_details, compile_program, edit_history, undo_last_edit, restore_version, wait_for_simpl_save, find_library_symbols, library_symbol_details). Use when the user asks about a SIMPL program, how its logic works, what SIMPL's warnings mean, or wants SIMPL logic added or changed.
+description: Read, explain, check, edit and compile Crestron SIMPL Windows programs (.smw) through the SIMPL Agent MCP server (simpl_agent_status, describe_program, folder_tree, list_folder, show_symbol, find_signals, follow_signal, find_problems, apply_edits, module_details, compile_program, edit_history, undo_last_edit, restore_version, wait_for_simpl_save, find_library_symbols, library_symbol_details, device tools, new_program, simpl_open, simpl_save, splus_reference, splus_compile). Use when the user asks about a SIMPL program, how its logic works, what SIMPL's warnings mean, wants SIMPL logic or devices added or changed, or wants a SIMPL+ module written.
 ---
 
 # SIMPL Agent
@@ -27,7 +27,7 @@ Tools for Crestron SIMPL Windows. They read, check and **edit** programs. Every 
 4. **Plan in one line** and tell the user, e.g. "Add an OR in Room A that turns on room_a_any when either source is on."
 5. **If SIMPL has the program open:** if `simpl_agent_status`/`simpl_save` show SIMPL was opened without admin rights (`simpl_open`), call `simpl_save` and edit with the revision it returns; SIMPL Agent reloads SIMPL afterwards. Otherwise **ask the user to save it there first** (Ctrl+S) and wait for their OK. After the edit, SIMPL offers to reload, and reloading discards anything unsaved. Then read the program again, and pass `user_confirmed_saved: true`.
 6. **Make ONE `apply_edits` call** with every operation the request needs, a one-line `summary`, and the `revision` from your last read. The call is all or nothing. Use `dry_run: true` first when unsure.
-   - **New signals:** they're created automatically when you name them in `inputs`, `outputs` or `connect`. Set `new_signal_type` to `analog` or `serial` when they aren't digital.
+   - **New signals:** they're created automatically when you name them in `inputs`, `outputs` or `connect`, with the pin's own type when the library gives one (a Serial Send's `out$` gets a serial signal). Set `new_signal_type` for pins that take any type.
    - **Wire every pin.** Use the built-in signals `0` or `1` for constant inputs.
    - **Second drivers:** a digital signal can't get a second driver, except between Buffer-type symbols. Analog and serial signals may have several.
    - **Which symbols:** only simple logic symbols proven in SIMPL 4.3x files can be added (`add_symbol_supported`), and only to files saved by SIMPL 4.3x.
@@ -36,7 +36,7 @@ Tools for Crestron SIMPL Windows. They read, check and **edit** programs. Every 
      - **SIMPL+ modules** need their compiled `.ush` beside the program; modules with drop-down parameters aren't supported yet.
    - **Device parameters and pins:** `add_device` also takes `parameters` ({name: value} or a list) and `connect` ({pin name: signal}). If it says a parameter has no default (e.g. a TCP/IP Client's Port), ask the user for the value. COM drivers go on a COM card's port: `network` = the card's '#handle', `address` = the port number.
    - **Panel and EISC joins (`wire_joins`):** `{symbol: '#h', joins: [{type: 'digital', join: 10, in: 'Power_On_Fb', out: 'Power_On_Press'}, ...]}`. `in` is the signal into the device (a panel's feedback), `out` the signal it drives (a press). Join lists grow as needed. Use the panel's symbol handle (`device_tree` shows it).
-   - **SIMPL+:** after writing or changing a `.usp`, run `splus_compile {path, targets: ['series4']}` (add 'series3' for 3-Series programs). Fix the errors it reports, then place it with `add_module`. The compiler's line numbers are its own count.
+   - **SIMPL+:** see [Writing SIMPL+ modules](#writing-simpl-modules).
    - **New programs:** `new_program {path, processor, system_name}` writes a new, empty program exactly as SIMPL's File > New does (never overwrites). Then build on it with `apply_edits`. Before the first compile, ask the user for the Program ID Tag and set it with `set_program_header {program_id_tag, program_name?}`; SIMPL refuses to compile without one.
    - **Devices (`add_device`, `remove_device`):** `device_tree` and `free_ids` show what's there; `find_library_devices` finds the exact device name and says whether it can be placed. `remove_device {device: '#handle'}` removes a device and everything inside it, as SIMPL's Delete does. Ask the user which IP ID to use; never pick one yourself. Give the device's exact library name or code and the `address` (hex, e.g. `03`). Devices go on an Ethernet IP ID or a Cresnet ID (4-Series, 3-Series, MC3). Touch panels, XPanels, EISCs, DM frames, NVX endpoints and other devices whose pins are all optional work; SIMPL's built-in sub-devices and empty card slots come with them. To put a card into a frame (e.g. a DMC-4KZ-C into a DM-MD8x8), give `network` as the frame ('#handle' from `device_tree`) and `address` as the slot number; only card types SIMPL writes consistently are allowed (DM input cards, DM endpoints and similar), not COM or IR drivers yet. Devices with required pins or parameters without a known default are refused with the reason. Use `network` (e.g. 'Cresnet Devices') when the ID exists on more than one network. The device's symbol appears under the network's symbol with its pins unwired; connect them afterwards with `connect`.
 7. **Read the result:** `changes`, `new_problems` (SIMPL-style warnings the edit introduced), and `next_step`. If a new problem is unintended, fix it with another `apply_edits`, or `undo_last_edit`.
@@ -47,6 +47,18 @@ Tools for Crestron SIMPL Windows. They read, check and **edit** programs. Every 
    Saving in SIMPL without reloading would overwrite the edit.
    - **Compile it yourself** with `compile_program` when SIMPL is closed or was opened with `simpl_open`. It takes under a minute and never transfers the program; SIMPL opens and closes on its own. Report SIMPL's errors, warnings and notices. If `matches_find_problems` is false, say so: it points at a SIMPL Agent rule to fix.
 9. **After the user saves in SIMPL,** read the program again before the next edit. SIMPL can renumber symbols, so a stale `revision` is refused. `wait_for_simpl_save` waits for that save.
+
+## Writing SIMPL+ modules
+1. **Agree the module's job and pins with the user** in one line, e.g. "DisplayFeedback: Rx$ in, Reports_On/Reports_Off out".
+2. **Look everything up with `splus_reference`** before using it: functions (`Find`, `Remove`, `GatherAsync`), declarations (`BUFFER_INPUT`), events, directives. Use the exact syntax it returns; never guess a function or its arguments. `#CATEGORY` returns the category IDs (e.g. "32" Miscellaneous).
+3. **Write the `.usp` beside the program** (so `add_module` finds it), in the SIMPL+ editor's layout: a comment block, then `#SYMBOL_NAME "..."`, `#CATEGORY "<id>"`, `#DEFAULT_VOLATILE`, `#ENABLE_STACK_CHECKING`, `#ENABLE_TRACE`, then inputs/outputs/parameters, globals, functions (declared before they're used), events, and `Function Main()`.
+   - Names can't be reserved words (e.g. `ON`): the compiler says "'ON' already defined" (1000).
+   - Declare string sizes (`STRING reply[200];`), and initialise globals in `Main`.
+   - Read inputs only after `WaitForInitializationComplete()` in `Main`.
+   - Don't give it parameter drop-down lists (`#BEGIN_PARAMETER_PROPERTIES` with `propList`) yet: `add_module` can't place those.
+4. **`splus_compile {path, targets}`** (`series4` for 4-Series, add `series3` for 3-Series programs) until it's clean. Each error comes with the help's explanation; line numbers are the compiler's own count. It fixes LF line endings first (SPlusCC silently drops everything after a `//` comment without CRLF), and its `module` field shows the pins SIMPL will show: check they're what you meant.
+5. **Place it** with `module_details` then `apply_edits add_module` (wire pins by name), then **`compile_program`**. A SIMPL that was already open keeps the module build it loaded first; `compile_program` saves and restarts one started by `simpl_open`, but ask the user to reopen an admin SIMPL.
+6. **Changing a placed module's pins** hasn't been checked against SIMPL yet: tell the user, and have them check the module in SIMPL.
 
 ## History
 - **`edit_history`:** what SIMPL Agent changed, and whether the file was changed elsewhere since.

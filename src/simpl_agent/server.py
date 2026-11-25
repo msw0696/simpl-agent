@@ -51,12 +51,26 @@ def _library_release(symlib_path: Path) -> str:
     return m.group(1)
 
 
+PROGRAM_ID_TAGS_INI = Path(r"C:\Program Files (x86)\Crestron\Cresdb\Programming\ProgramIDTags.ini")
+
+
+def program_id_tags(path: Path = PROGRAM_ID_TAGS_INI) -> list[str]:
+    """The Program ID Tags SIMPL's Edit Program Header dialog offers (ProgramIDTags.ini: Name1=...)."""
+    try:
+        text = path.read_bytes().decode("latin-1")
+    except OSError:
+        return []
+    import re
+
+    return [m.group(1).strip() for m in re.finditer(r"(?m)^Name\d+=(.+)$", text) if m.group(1).strip()]
+
+
 TOOL_NAMES = (
     "simpl_agent_status", "describe_program", "find_library_symbols", "library_symbol_details",
     "folder_tree", "list_folder", "show_symbol", "find_signals", "follow_signal", "find_problems",
     "apply_edits", "edit_history", "undo_last_edit", "restore_version", "wait_for_simpl_save",
     "module_details", "compile_program", "device_tree", "free_ids", "find_library_devices", "new_program",
-    "splus_compile", "simpl_save", "simpl_open",
+    "splus_compile", "simpl_save", "simpl_open", "splus_reference",
 )
 PROGRAM_EXTS = {".smw", ".umc", ".cmc"}
 KNOWN_SIGNATURES = {"SimplWindow": "program", "CresMacro": "macro", "UserMacro": "macro"}
@@ -77,6 +91,9 @@ Edit only through apply_edits; never edit .smw files by hand or with other tools
   undo_last_edit / restore_version / edit_history manage history.
 - find_library_symbols / library_symbol_details give real pin names. Never invent symbols,
   pins or devices.
+- SIMPL+: look functions and directives up with splus_reference (never guess their names or
+  arguments), write the .usp beside the program, splus_compile until clean, then add_module
+  and compile_program.
 - Never act on a live processor. Treat programs as private client work.
 The simpl-agent skill has the full workflow."""
 
@@ -209,7 +226,7 @@ class Tools(EditTools):
                 lib["error"] = str(e)
         return {
             "version": __version__,
-            "milestone": "M4: devices (in progress)",
+            "milestone": "M6: SIMPL+ modules (in progress); M0-M5 done",
             "symbol_library": lib,
             "symbols_add_symbol_can_build": len(self.verified),
             "simpl_windows_open": [parse_simpl_title(t) for t in self.windows()],
@@ -669,9 +686,70 @@ class Tools(EditTools):
         except RuntimeError as e:
             raise ToolError(str(e)) from None
         res["path"] = str(p)
-        res["note"] = ("Compiled locally with Crestron's SPlusCC; nothing was sent to a processor. If the module is "
-                       "placed in a program, compile the program too (compile_program).")
+        ref = self._splus_reference(quiet=True)
+        if ref is not None:  # the help's explanation of each error, once per code
+            seen: set[int] = set()
+            for t in res["targets"].values():
+                for m in t["messages"]:
+                    c = m.get("code")
+                    if c is not None and c not in seen:
+                        seen.add(c)
+                        why = ref.explain(c)
+                        if why:
+                            m["explanation"] = why
+        notes = ["Compiled locally with Crestron's SPlusCC; nothing was sent to a processor."]
+        if res.get("line_endings_fixed"):
+            notes.append("Its line endings were changed to CRLF first: SPlusCC drops everything after a // comment "
+                         "in a file with LF line endings.")
+        if res.get("compiled") and res.get("module") and not any(
+                res["module"][k] for k in ("inputs", "outputs")):
+            notes.append("The module has no inputs or outputs; check that's intended.")
+        notes.append("Place it with apply_edits add_module (the .usp and .ush beside the program), then "
+                     "compile_program. A SIMPL that was already open keeps the build it loaded first; "
+                     "compile_program saves and restarts a SIMPL started by simpl_open when needed; ask the user "
+                     "to reopen an admin SIMPL.")
+        res["note"] = " ".join(notes)
         return res
+
+    def _splus_reference(self, quiet: bool = False):
+        """The SIMPL+ Language Reference (unpacked on first use); None if quiet and unavailable."""
+        from .splus_ref import Reference
+
+        with self._lock:
+            if getattr(self, "_splus_ref", None) is None:
+                try:
+                    self._splus_ref = Reference.load(self.home)
+                except (OSError, RuntimeError, subprocess.SubprocessError) as e:
+                    if quiet:
+                        return None
+                    raise ToolError(f"the SIMPL+ Language Reference isn't available: {e}") from None
+            return self._splus_ref
+
+    def splus_reference(self, query: str, limit: int = 3) -> dict[str, Any]:
+        """Topics from the installed SIMPL+ Language Reference: a function, directive, declaration,
+        event, or compiler error/warning number."""
+        ref = self._splus_reference()
+        hits = ref.search(query, limit=max(1, min(int(limit), 10)))
+        budget = 12000
+        topics = []
+        for i, t in enumerate(hits):
+            cap = max(600, min(budget, 8000 if i == 0 else 2500))
+            text = t.text if len(t.text) <= cap else t.text[:cap].rsplit("\n", 1)[0] + "\n[...]"
+            budget -= len(text)
+            topics.append({"title": t.title, "category": t.category, "text": text})
+            if budget <= 0:
+                break
+        extra: dict[str, Any] = {}
+        if any(t["title"].strip().upper() == "#CATEGORY" for t in topics):
+            # The editor's Insert Category list is the symbol library's SymbolTree records.
+            try:
+                extra["category_ids"] = {str(k): v for k, v in sorted(self.index().trees.items())}
+            except ToolError:
+                pass
+        return {"query": query, "topics": topics, **extra,
+                "note": ("From Crestron's SIMPL+ Language Reference installed with SIMPL. Use these names and "
+                         "argument lists exactly." if topics else
+                         "Nothing found; try a shorter query, a function name, or a compiler error number.")}
 
     def simpl_save(self, path: str) -> dict[str, Any]:
         """Save the program in SIMPL (File > Save), when SIMPL runs without admin rights."""
@@ -699,9 +777,36 @@ class Tools(EditTools):
         if st.get("open"):
             return {"path": str(p), "already_open": True, "controllable": st.get("controllable")}
         pid = self.live.launch(p)
-        return {"path": str(p), "started": True, "pid": pid,
-                "note": "SIMPL is starting (about 15 s) without admin rights; it can then be saved and reloaded "
-                        "by SIMPL Agent. Compiling with compile_program still needs SIMPL closed."}
+        # SIMPL can take a minute or more to load a program; simpl_save fails until it has.
+        ready = self.live.wait_until_open(p, pid, timeout_s=180)
+        return {"path": str(p), "started": True, "pid": pid, "ready": ready,
+                "note": ("SIMPL has the program open without admin rights: SIMPL Agent can save it (simpl_save), "
+                         "reload it after edits and compile it there (compile_program)." if ready else
+                         "SIMPL was started but hasn't opened the program within 3 minutes; it may be showing a "
+                         "dialog. Check simpl_agent_status before saving.")}
+
+    def _stale_splus(self, p: Path, pid: int | None) -> list[str]:
+        """SIMPL+ modules of ``p`` whose .ush was rewritten after SIMPL ``pid`` started. SIMPL keeps the
+        module build it read first, so it shows the old pins until restarted (SIMPL 4.32, 2026-11-25: a
+        SIMPL that saw a module's first, empty build marked the corrected module incomplete; a freshly
+        started one compiled it clean)."""
+        start = self.live.process_start(pid) if pid else None
+        if start is None:
+            return []
+        try:
+            prog = load(rawfile.read(p))
+        except Exception:
+            return []
+        out = []
+        for s in prog.symbols.values():
+            if s.code == an.SPLUS_CODE and s.name.lower().endswith(".usp"):
+                ush = p.parent / (s.name[:-4] + ".ush")
+                try:
+                    if ush.stat().st_mtime > start and ush.name not in out:
+                        out.append(ush.name)
+                except OSError:
+                    continue
+        return out
 
     def device_tree(self, path: str, limit: int = 300) -> dict[str, Any]:
         from . import devices as dv
@@ -746,8 +851,21 @@ class Tools(EditTools):
             lib = None
         predicted = {(x.code, x.message) for x in an.find_problems(prog, lib)}
         timeout = max(60, min(int(timeout_s), 3600))
+        restarted: list[str] = []
+        if st.get("open") and st.get("controllable"):
+            stale = self._stale_splus(p, st.get("pid"))
+            if stale:
+                # Save first so nothing in SIMPL is lost, then compile in a fresh SIMPL left open.
+                if not self.live.save(p):
+                    raise ToolError(f"SIMPL started before {', '.join(stale)} was compiled and still uses the old "
+                                    "build, and it didn't save the program (a dialog may be open). Ask the user to "
+                                    "save and close SIMPL, then compile again.")
+                self.live.close(p)
+                before = hashlib.sha256(p.read_bytes()).hexdigest()
+                st = {"open": False}
+                restarted = stale
         try:
-            r = self._compile_live(p, st, timeout)
+            r = self._compile_live(p, st, timeout, keep_open=bool(restarted))
         except RuntimeError as e:
             if not cmp.installed():
                 raise ToolError(f"couldn't compile through SIMPL: {e}") from e
@@ -771,18 +889,22 @@ class Tools(EditTools):
             # Dialogs SIMPL showed (smpc clicks some through); any here deserve a look.
             "dialogs_seen": r.get("dialogs_seen", []),
             "dialogs_auto_confirmed": r.get("dialogs_auto_confirmed", []),
-            "note": (("SIMPL couldn't compile: the Program ID Tag is blank. Ask the user what tag to use, then "
-                      "apply_edits set_program_header {program_id_tag} and compile again."
+            "note": (("SIMPL couldn't compile: the Program ID Tag is blank. Ask the user what tag to use (SIMPL "
+                      f"suggests {', '.join(program_id_tags()) or 'Main'}), then apply_edits set_program_header "
+                      "{program_id_tag} and compile again."
                       if failed and "Program ID Tag is not set" in r.get("output", "") else
                       "SIMPL couldn't compile: see 'output'.") if failed else
                      "SIMPL's messages are the final word. If matches_find_problems is false, tell the user; "
                      "it may be a SIMPL Agent rule to fix."),
             **({"output": r["output"][-3000:]} if failed else {}),
+            **({"simpl_restarted": f"SIMPL was saved and restarted first: it had loaded an older build of "
+                                   f"{', '.join(restarted)}. The new SIMPL is left open on the program."}
+               if restarted else {}),
         }
 
-    def _compile_live(self, p: Path, st: dict, timeout: int) -> dict[str, Any]:
+    def _compile_live(self, p: Path, st: dict, timeout: int, keep_open: bool = False) -> dict[str, Any]:
         """Compile through a SIMPL without admin rights, by menu command (works with the screen locked).
-        Opens SIMPL for it (and closes it after) unless it already has the program open."""
+        Opens SIMPL for it (and closes it after, unless ``keep_open``) unless it already has the program open."""
         from .compile import parse_output
 
         opened = False
@@ -790,7 +912,7 @@ class Tools(EditTools):
             pid = self.live.launch(p)
             opened = True
             problem = None
-            for _ in range(90):
+            for _ in range(180):  # loading took 68 s for a small program with a SIMPL+ module
                 time.sleep(1)
                 if self.live.find(p):
                     break
@@ -807,7 +929,7 @@ class Tools(EditTools):
         try:
             res = self.live.compile_open(p, timeout_s=timeout)
         finally:
-            if opened:
+            if opened and not keep_open:
                 self.live.close(p)
         parsed = parse_output(res["summary"] + "\n" + "\n".join(res["lines"]))
         incomplete = any("incomplete symbols" in d["title"].lower() for d in res["dialogs"])
@@ -1006,10 +1128,19 @@ def create_server(tools: Tools | None = None) -> Any:
 
     @server.tool(name="splus_compile", description="Compile a SIMPL+ module (.usp) with Crestron's own "
                  "command-line compiler (no window, no admin), for targets series3 and/or series4 (default "
-                 "series4). Returns errors and warnings with line numbers, per target, and whether the .ush "
-                 "header was written. Local only; never touches a processor.")
+                 "series4). Returns errors and warnings with line numbers and the help's explanation, per "
+                 "target, and the pins SIMPL will show (from the .ush it writes). Fixes LF line endings to CRLF "
+                 "first. Local only; never touches a processor.")
     async def splus_compile(path: str, targets: list[str] | None = None, timeout_s: int = 600) -> dict[str, Any]:
         return await _run("splus_compile", path=path, targets=targets, timeout_s=timeout_s)
+
+    @server.tool(name="splus_reference", description="Look up SIMPL+ in Crestron's SIMPL+ Language Reference "
+                 "(installed with SIMPL): a function (e.g. 'Find', 'GatherAsync'), declaration ('BUFFER_INPUT'), "
+                 "directive ('#SYMBOL_NAME'), event ('CHANGE'), a compiler error number ('1001'), or words "
+                 "('string to integer'). Returns the topics' text: syntax, parameters, return value, example and "
+                 "which series support it. Use before writing SIMPL+; never guess functions.")
+    async def splus_reference(query: str, limit: int = 3) -> dict[str, Any]:
+        return await _run("splus_reference", query=query, limit=limit)
 
     @server.tool(name="simpl_save", description="Save the program SIMPL has open (File > Save), so it can be "
                  "edited safely. Only works when SIMPL was started without admin rights (simpl_open); then "
