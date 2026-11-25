@@ -1,11 +1,6 @@
 {
  "note": "How SIMPL writes a device a user puts into a slot; measured by tools/build_slot_rules.py",
  "codes": {
-  "125": {
-   "slc": true,
-   "db": false,
-   "seen": 12
-  },
   "200": {
    "slc": false,
    "db": true,
@@ -31,11 +26,6 @@
    "db": false,
    "seen": 4
   },
-  "1756": {
-   "slc": true,
-   "db": false,
-   "seen": 2
-  },
   "1897": {
    "slc": false,
    "db": true,
@@ -51,39 +41,14 @@
    "db": true,
    "seen": 2
   },
-  "2566": {
-   "slc": false,
-   "db": true,
-   "seen": 2
-  },
   "2836": {
    "slc": false,
    "db": true,
    "seen": 8
   },
-  "3185": {
-   "slc": true,
-   "db": false,
-   "seen": 2
-  },
-  "3186": {
-   "slc": true,
-   "db": false,
-   "seen": 4
-  },
-  "3201": {
-   "slc": false,
-   "db": false,
-   "seen": 2
-  },
   "3229": {
    "slc": false,
    "db": true,
-   "seen": 2
-  },
-  "3719": {
-   "slc": false,
-   "db": false,
    "seen": 2
   },
   "3823": {
@@ -210,6 +175,43 @@
    "slc": false,
    "db": true,
    "seen": 2
+  }
+ },
+ "slot_types": {
+  "DM_CPU3_Input_Card": {
+   "slc": false,
+   "db": true,
+   "seen": 7
+  },
+  "DM_C_Input_Card_Network": {
+   "slc": false,
+   "db": true,
+   "seen": 5
+  },
+  "DM_EndPoint_Input_C_Slot": {
+   "slc": false,
+   "db": true,
+   "seen": 6
+  },
+  "DM_EndPoint_Output_C_Slot": {
+   "slc": false,
+   "db": true,
+   "seen": 11
+  },
+  "DM_Input_Card": {
+   "slc": false,
+   "db": true,
+   "seen": 7
+  },
+  "MC3Ethernet": {
+   "slc": false,
+   "db": true,
+   "seen": 7
+  },
+  "P4Cresnet": {
+   "slc": false,
+   "db": true,
+   "seen": 21
   }
  }
 }

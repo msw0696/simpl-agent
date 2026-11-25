@@ -41,7 +41,7 @@ TOOL_NAMES = (
     "simpl_agent_status", "describe_program", "find_library_symbols", "library_symbol_details",
     "folder_tree", "list_folder", "show_symbol", "find_signals", "follow_signal", "find_problems",
     "apply_edits", "edit_history", "undo_last_edit", "restore_version", "wait_for_simpl_save",
-    "module_details", "compile_program", "device_tree", "free_ids",
+    "module_details", "compile_program", "device_tree", "free_ids", "find_library_devices",
 )
 PROGRAM_EXTS = {".smw", ".umc", ".cmc"}
 KNOWN_SIGNATURES = {"SimplWindow": "program", "CresMacro": "macro", "UserMacro": "macro"}
@@ -535,6 +535,50 @@ class Tools(EditTools):
                 self._devlib = None
         return self._devlib
 
+    def find_library_devices(self, query: str, limit: int = 20) -> dict[str, Any]:
+        from .smw.device_edit import NETWORK_LABELS, slot_layout, support_problem
+
+        if not isinstance(query, str) or not query.strip():
+            raise ToolError("give a model or a few words, e.g. 'TSW-1070' or 'touch screen'")
+        devlib = self._device_library()
+        if devlib is None:
+            raise ToolError("SIMPL's device library (iodev.tio) isn't available")
+        q = query.strip().lower()
+        words = q.split()
+
+        def rank(d) -> tuple:
+            name, hint = d.name.lower(), (d.fields.get("Hint") or "").lower()
+            if name == q:
+                return (0, len(name))
+            if name.startswith(q):
+                return (1, len(name))
+            if q in name:
+                return (2, len(name))
+            if all(w in name or w in hint for w in words):
+                return (3, len(name))
+            return (9, 0)
+
+        hits = sorted((d for d in devlib.devices.values() if rank(d)[0] < 9), key=lambda d: (rank(d), d.name))
+        limit = max(1, min(int(limit), 100))
+        lib = self.index().library
+        rows = []
+        for d in hits[:limit]:
+            nets = sorted({NETWORK_LABELS[t] for t in d.occupies if t in NETWORK_LABELS})
+            why = support_problem(devlib, lib, d)
+            row: dict[str, Any] = {"code": d.code, "name": d.name, "hint": d.fields.get("Hint") or "",
+                                   "goes_on": nets or [f"slot: {t}" for t in d.occupies[:4]],
+                                   "add_device_supported": why is None}
+            if why:
+                row["why_not"] = why
+            if any(fx is None and t != "NotUsed" for _, t, fx in slot_layout(devlib, d)):
+                row["has_open_slots"] = True  # cards or drivers can go in it
+            if d.fields.get("DefaultNetAddress"):
+                row["default_id"] = d.fields["DefaultNetAddress"]
+            if d.fields.get("CDSReleaseStatus") == "Discontinued":
+                row["discontinued"] = True
+            rows.append(row)
+        return {"query": query, "count": len(hits), "results": rows}
+
     def device_tree(self, path: str, limit: int = 300) -> dict[str, Any]:
         from . import devices as dv
 
@@ -765,6 +809,13 @@ def create_server(tools: Tools | None = None) -> Any:
                  "port), where it sits, model, IP address and logic symbol. Read-only.")
     async def device_tree(path: str, limit: int = 300) -> dict[str, Any]:
         return await _run("device_tree", path=path, limit=limit)
+
+    @server.tool(name="find_library_devices", description="Search SIMPL's installed device library by model "
+                 "or words (e.g. 'TSW-1070', 'DM input card', 'touch screen'). Returns code, exact name, "
+                 "description, where it goes (Ethernet IP ID, Cresnet ID, or a frame's slot), and whether "
+                 "add_device can place it (with the reason if not). Use the exact name in add_device.")
+    async def find_library_devices(query: str, limit: int = 20) -> dict[str, Any]:
+        return await _run("find_library_devices", query=query, limit=limit)
 
     @server.tool(name="free_ids", description="Free and used IDs on each of the program's networks (Ethernet "
                  "IP IDs, Cresnet IDs, ports). network filters by name or transport, e.g. 'Ethernet'. Read-only; "

@@ -43,6 +43,9 @@ if TYPE_CHECKING:
 # Network ID slots (IP IDs, Cresnet IDs) whose devices follow these rules in the corpus: no SlC, a Db
 # record, free IDs in one record. P4Ethernet is also proven by SIMPL 4.32 saves (f12-round5/6).
 PROVEN_SLOTS = {"P4Ethernet", "P3Ethernet", "MC3Ethernet", "P4Cresnet", "P3Cresnet"}
+NETWORK_LABELS = {"P4Ethernet": "Ethernet IP ID (4-Series)", "P3Ethernet": "Ethernet IP ID (3-Series)",
+                  "MC3Ethernet": "Ethernet IP ID (MC3)", "P4Cresnet": "Cresnet ID (4-Series)",
+                  "P3Cresnet": "Cresnet ID (3-Series)"}
 NOT_USED = {"Not_Used", "NotUsed"}
 ADDRESS_RE = re.compile(r"^(?:0x)?([0-9A-Fa-f]{1,2})$")
 LISTS = ("", "List2", "List3")
@@ -52,18 +55,19 @@ PARAM_DEFAULTS = {"PermanentStringSize": "255d"}
 NAME_PARAM = "Name"
 
 
-def _slot_device_rules() -> dict[int, dict]:
-    """How SIMPL writes a device a user puts into a slot, per device code (tools/build_slot_rules.py)."""
+def _slot_rules() -> dict:
+    """How SIMPL writes a device a user puts into a slot (tools/build_slot_rules.py): per device code,
+    and per slot type where every instance agrees."""
     import json
     from pathlib import Path
 
     path = Path(__file__).resolve().parents[1] / "catalog" / "slot_device_rules.json"
-    if not path.exists():
-        return {}
-    return {int(c): r for c, r in json.loads(path.read_text("utf-8"))["codes"].items()}
+    return json.loads(path.read_text("utf-8")) if path.exists() else {}
 
 
-SLOT_DEVICE_RULES = _slot_device_rules()
+_RULES = _slot_rules()
+SLOT_DEVICE_RULES = {int(c): r for c, r in _RULES.get("codes", {}).items()}
+SLOT_TYPE_RULES: dict[str, dict] = dict(_RULES.get("slot_types", {}))
 # Card types proven by SIMPL 4.32 saves that the corpus doesn't show (f12-round8).
 SLOT_DEVICE_RULES.setdefault(5917, {"slc": False, "db": True, "seen": 0})  # DMC-4KZ-C-DSP
 
@@ -277,6 +281,53 @@ def processor_series(ed: Editor, devlib: DeviceLibrary) -> str | None:
     return "2" if "2-Series" in line and "3-Series" not in line and "4-Series" not in line else None
 
 
+def device_symbol(lib, dd: DeviceDef, series: str | None = None):
+    """The library symbol add_device would write for ``dd`` (None if it has none); EditError if it can't."""
+    from .edit import EditError
+
+    code = symbol_code_for(dd, series)
+    if code is None:
+        return None
+    ls = lib.get(code) if lib is not None else None
+    if ls is None:
+        raise EditError(f"{dd.name}'s logic symbol ({code}) isn't in the symbol library")
+    why = symbol_shape_problem(ls)
+    if why:
+        raise EditError(f"{dd.name} can't be added yet: {why}")
+    return ls
+
+
+def support_problem(devlib: DeviceLibrary, lib, dd: DeviceDef, series: str | None = None) -> str | None:
+    """Why add_device can't place ``dd`` (None if it can): its own symbol, and everything SIMPL puts inside it."""
+    from .edit import EditError
+
+    if symbol_code_for(dd, series) is None:
+        return "it has no logic symbol of its own; it's part of another device"
+    if (not any(t in PROVEN_SLOTS for t in dd.occupies) and dd.code not in SLOT_DEVICE_RULES
+            and not any(t in SLOT_TYPE_RULES for t in dd.occupies)):
+        return "it goes in a slot SIMPL Agent can't fill yet"
+    seen: set[int] = set()
+
+    def walk(d: DeviceDef, depth: int) -> None:
+        if d.code in seen:
+            return
+        seen.add(d.code)
+        if depth > 8:
+            raise EditError(f"{d.name} nests too deeply")
+        device_symbol(lib, d, series)
+        for _, typ, fixed in slot_layout(devlib, d):
+            if typ not in devlib.slots:
+                raise EditError(f"{d.name}: slot type {typ} isn't in the device library")
+            if fixed is not None:
+                walk(fixed, depth + 1)
+
+    try:
+        walk(dd, 0)
+    except EditError as e:
+        return str(e)
+    return None
+
+
 class _Build:
     """Records for a device and everything SIMPL puts inside it, numbered depth first."""
 
@@ -292,18 +343,7 @@ class _Build:
         self.series = processor_series(ed, devlib)
 
     def symbol_for(self, dd: DeviceDef):
-        from .edit import EditError
-
-        code = symbol_code_for(dd, self.series)
-        if code is None:
-            return None
-        ls = self.ed.lib.get(code) if self.ed.lib is not None else None
-        if ls is None:
-            raise EditError(f"{dd.name}'s logic symbol ({code}) isn't in the symbol library")
-        why = symbol_shape_problem(ls)
-        if why:
-            raise EditError(f"{dd.name} can't be added yet: {why}")
-        return ls
+        return device_symbol(self.ed.lib, dd, self.series)
 
     def device(self, dd: DeviceDef, *, handle: int, parent: int, address: str, slot_code: str | None,
                sym_parent: int, db: int | None = None, et: int | None = None, depth: int = 0,
@@ -493,6 +533,10 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
         raise EditError(f"address {addr} is already used by {used.name if used else '?'}")
     if on_network:
         slot_code, with_db = None, True
+    elif rule is None and slot.name in SLOT_TYPE_RULES:
+        rule = SLOT_TYPE_RULES[slot.name]
+        slot_code = slot.record.get("SlC") if rule["slc"] else None
+        with_db = bool(rule["db"])
     elif rule is None:
         raise EditError(f"{dd.name} isn't supported in a slot yet: the public programs don't show how SIMPL "
                         "writes it consistently")
