@@ -46,6 +46,7 @@ OP_KEYS: dict[str, tuple[set[str], set[str]]] = {
     "rename_folder": ({"folder", "new_name"}, set()),
     "remove_symbol": ({"symbol"}, set()),
     "move_symbol": ({"symbol", "folder"}, set()),
+    "set_program_header": (set(), {"program_id_tag", "program_name"}),
 }
 
 
@@ -167,6 +168,8 @@ class EditTools:
             ed.remove_symbol(e["symbol"])
         elif op == "move_symbol":
             ed.move_symbol(e["symbol"], e["folder"])
+        elif op == "set_program_header":
+            ed.set_program_header(e.get("program_id_tag"), e.get("program_name"))
 
     @staticmethod
     def _key(p: Path) -> str:

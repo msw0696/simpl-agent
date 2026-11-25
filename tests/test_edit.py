@@ -18,6 +18,8 @@ def fake_library() -> SymbolLibrary:
         9: ("One Shot", {"Smpl-C": "1", "DeviceCode": "0", "NumFixedInputs": "3", "NumFixedOutputs": "2",
                          "NumFixedParams": "1", "ParamCue1": "pulse_time"}),
         999: ("Some Device", {"Smpl-C": "17", "DeviceCode": "42"}),
+        89: ("Serial Send", {"Smpl-C": "1", "DeviceCode": "0", "NumFixedInputs": "1", "NumFixedOutputs": "1",
+                             "NumFixedParams": "1", "OutputSigType1": "Serial", "ParamSigType1": "String"}),
     }
     for code, (name, fields) in defs.items():
         lib.symbols[code] = LibSymbol(code=code, name=name, fields={"Code": str(code), "Name": name, **fields})
@@ -26,7 +28,7 @@ def fake_library() -> SymbolLibrary:
 
 @pytest.fixture
 def ed(tiny: bytes) -> Editor:
-    return Editor(rawfile.parse(tiny), fake_library(), verified_codes={3, 9, 20})
+    return Editor(rawfile.parse(tiny), fake_library(), verified_codes={3, 9, 20, 89})
 
 
 def test_rename_signal_changes_one_line(ed: Editor, tiny: bytes) -> None:
@@ -76,6 +78,33 @@ def test_add_symbol_refuses_second_driver(ed: Editor, tiny: bytes) -> None:
     with pytest.raises(EditError, match="already has a driver"):
         ed.add_symbol(3, "Logic", inputs=["room_enable", "brand_new"], outputs=["room_out"])
     assert ed.raw.to_bytes() == tiny  # the new input signal was rolled back too
+
+
+def test_new_signals_take_the_pin_type(ed: Editor) -> None:
+    # Found on a real job: a Serial Send's out$ used to get a digital signal, so a second
+    # Serial Send into the same TX$ was refused as a second digital driver.
+    a = ed.add_symbol(89, "Logic", inputs=["pwr_on"], outputs=["tx$"], params=['"PWR ON\\x0D"'])
+    b = ed.add_symbol(89, "Logic", inputs=["pwr_off"], outputs=["tx$"], params=['"PWR OFF\\x0D"'])
+    tx = ed.prog.symbols[a].outputs[1]
+    assert ed.prog.symbols[b].outputs[1] == tx and ed.prog.signals[tx].type == "serial"
+    assert ed.prog.signals[ed.find_signal("pwr_on")].type == "digital"
+    with pytest.raises(EditError, match="takes serial signals"):
+        ed.add_symbol(89, "Logic", inputs=["pwr_off"], outputs=["room_level"], params=['"x"'])
+
+
+def test_set_program_header(ed: Editor) -> None:
+    with pytest.raises(EditError, match="no PIT line"):
+        ed.set_program_header(program_id_tag="Main")  # the tiny fixture's header is bare
+    hd = ed.prog.header
+    hd.lines += [("DvcDbVr", "200.475.002.00"), ("CltNm", "x"), ("ZeroOnIoOk", "0"), ("PIT", ""), ("SGMethod", "1")]
+    ed.set_program_header(program_id_tag="Main", program_name="Sample")
+    k = ed.prog.header.keys()
+    assert ed.prog.header.get("PIT") == "Main" and k.index("PIT") == k.index("ZeroOnIoOk") + 1
+    assert ed.prog.header.get("PgmNm") == "Sample" and k.index("PgmNm") == k.index("DvcDbVr") + 1
+    with pytest.raises(EditError, match="bad program_id_tag"):
+        ed.set_program_header(program_id_tag=" x")
+    with pytest.raises(EditError, match="give"):
+        ed.set_program_header()
 
 
 def test_buffer_may_share_outputs(ed: Editor) -> None:

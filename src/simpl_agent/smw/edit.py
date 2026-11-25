@@ -253,8 +253,8 @@ class Editor:
         # Resolve everything before changing anything, so errors leave no trace.
         snapshot = self._snapshot()
         try:
-            in_h = [self.signal_for(r, create_type=new_signal_type) for r in inputs]
-            out_h = [self.signal_for(r, create_type=new_signal_type) for r in outputs]
+            in_h = [self._typed_signal(r, ls, "I", n, new_signal_type) for n, r in enumerate(inputs, 1)]
+            out_h = [self._typed_signal(r, ls, "O", n, new_signal_type) for n, r in enumerate(outputs, 1)]
             if not allow_second_driver:
                 for sig in out_h:
                     if sig is not None:
@@ -281,6 +281,32 @@ class Editor:
     def _restore(self, snapshot: list) -> None:
         self.raw.items = snapshot
         self._reload()
+
+    @staticmethod
+    def pin_types(ls: LibSymbol | None, letter: str, n: int) -> list[str]:
+        """The signal types a library symbol's pin takes, from its Input/OutputSigType<n>;
+        [] when the library doesn't say (then it's usually digital, but not always)."""
+        if ls is None:
+            return []
+        t = (ls.fields.get(f"{'Input' if letter == 'I' else 'Output'}SigType{n}") or "").lower()
+        if "any" in t:
+            return []
+        return [k for k in ("digital", "analog", "serial") if k in t or (k == "serial" and "string" in t)]
+
+    def _typed_signal(self, ref: str | int | None, ls: LibSymbol | None, letter: str, n: int,
+                      default_type: str) -> int | None:
+        """A pin's signal: new signals get the pin's own type when it has exactly one (a Serial
+        Send's out$ is serial), else ``default_type``. An existing signal of the wrong type is
+        refused, as SIMPL won't connect it."""
+        types = self.pin_types(ls, letter, n)
+        h = self.signal_for(ref, create_type=types[0] if len(types) == 1 else default_type)
+        if h is None or not types or h in set(self.prog.builtin_signals.values()):
+            return h
+        sg = self.prog.signals.get(h)
+        if sg is not None and sg.type not in types and not sg.name.startswith("//"):
+            name = (ls.cues("InputCue" if letter == "I" else "OutputCue").get(n) if ls else None) or f"{letter}{n}"
+            raise EditError(f"pin {letter}{n} ({name}) takes {'/'.join(types)} signals, but {sg.name!r} is {sg.type}")
+        return h
 
     def check_can_drive(self, sig: int, driver: LibSymbol | None) -> None:
         """Refuse an output that would give a digital signal a second driver.
@@ -380,7 +406,7 @@ class Editor:
                 self._reload()
                 self.log.add(f"disconnected #{s.handle} {letter}{n}")
                 return
-            sig = self.signal_for(signal, create_type=new_signal_type)
+            sig = self._typed_signal(signal, self.lib.get(s.code) if self.lib else None, letter, n, new_signal_type)
             if letter == "O" and s.outputs.get(n) != sig:
                 self.check_can_drive(sig, self.lib.get(s.code) if self.lib else None)
             self._set_pin_key(s.record, letter, n, str(sig))
@@ -416,6 +442,30 @@ class Editor:
             rec.set("Cmn1", encoded, after=anchor)
         self._reload()
         self.log.add(f"set comment on #{s.handle}")
+
+    def set_program_header(self, program_id_tag: str | None = None, program_name: str | None = None) -> None:
+        """Project > Edit Program Header: the Program ID Tag (``PIT``, which SIMPL needs before it
+        compiles; a new program leaves it blank) and the Program Name (``PgmNm``, between
+        ``DvcDbVr`` and ``CltNm`` in SIMPL's saves)."""
+        hd = self.prog.header
+        if hd is None:
+            raise EditError("this program has no header record")
+        if program_id_tag is None and program_name is None:
+            raise EditError("give program_id_tag and/or program_name")
+        for label, v in (("program_id_tag", program_id_tag), ("program_name", program_name)):
+            if v is not None and (not v.strip() or v != v.strip() or any(c in v for c in "\r\n\\[]=")):
+                raise EditError(f"bad {label} {v!r}: one line, no surrounding spaces, no \\ [ ] =")
+        if program_id_tag is not None:
+            if "PIT" not in hd and "ZeroOnIoOk" not in hd:
+                raise EditError("this header has no PIT line, and where SIMPL puts one isn't known for it")
+            hd.set("PIT", program_id_tag, after="ZeroOnIoOk")
+            self.log.add(f"set Program ID Tag to {program_id_tag!r}")
+        if program_name is not None:
+            if "PgmNm" not in hd and "DvcDbVr" not in hd:
+                raise EditError("this header has no PgmNm line, and where SIMPL puts one isn't known for it")
+            hd.set("PgmNm", program_name, after="DvcDbVr")
+            self.log.add(f"set Program Name to {program_name!r}")
+        self._reload()
 
     # ------------------------------------------------------------ folder and structure edits
     def rename_folder(self, folder: str | int, new_name: str) -> None:

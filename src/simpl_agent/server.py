@@ -771,7 +771,10 @@ class Tools(EditTools):
             # Dialogs SIMPL showed (smpc clicks some through); any here deserve a look.
             "dialogs_seen": r.get("dialogs_seen", []),
             "dialogs_auto_confirmed": r.get("dialogs_auto_confirmed", []),
-            "note": ("SIMPL couldn't compile: see 'output'." if failed else
+            "note": (("SIMPL couldn't compile: the Program ID Tag is blank. Ask the user what tag to use, then "
+                      "apply_edits set_program_header {program_id_tag} and compile again."
+                      if failed and "Program ID Tag is not set" in r.get("output", "") else
+                      "SIMPL couldn't compile: see 'output'.") if failed else
                      "SIMPL's messages are the final word. If matches_find_problems is false, tell the user; "
                      "it may be a SIMPL Agent rule to fix."),
             **({"output": r["output"][-3000:]} if failed else {}),
@@ -954,6 +957,8 @@ def create_server(tools: Tools | None = None) -> Any:
                  "frame's slot number), network? (or the frame '#handle' for a card), parameters? [...] or "
                  "{name: value}, connect? {pin name: signal}} (see free_ids); "
                  "remove_device {device ('#handle' from device_tree)}; "
+                 "set_program_header {program_id_tag?, program_name?} (SIMPL won't compile with a blank "
+                 "Program ID Tag, as new_program leaves it; ask the user for it); "
                  "wire_joins {symbol (a panel or EISC symbol '#h'), joins [{type digital|analog|serial, join n, "
                  "in? (signal into it, e.g. feedback), out? (signal it drives, e.g. press)}]} (lists grow as needed); "
                  "rename_signal {signal, new_name}; rename_folder {folder, "

@@ -56,7 +56,8 @@ SIMPL Windows programs are large, flat graphs of symbols and signals. They're sa
 - **Wiring and settings:** `connect` (or disconnect), `set_parameter`, `set_comment`, `rename_signal`, `rename_folder`. New signals are created when a pin names them.
 - **Modules:** `add_module` places a macro or SIMPL+ module, wired by pin name. Unused required pins go on SIMPL's `//__…_reserved__` placeholders.
 - **Devices:** `add_device` places a device at an IP ID or Cresnet ID the user chooses, or a card in a frame's slot; `remove_device` removes one with everything inside it; `wire_joins` connects a panel's or EISC's digital, analog and serial joins by number, growing its join lists as needed (see [M4](#m4-devices-in-progress)).
-- **New programs:** `new_program` (a tool of its own) writes an empty program for a processor exactly as SIMPL's File > New does.
+- **New programs:** `new_program` (a tool of its own) writes an empty program for a processor exactly as SIMPL's File > New does. SIMPL won't compile a program with a blank Program ID Tag, which File > New leaves blank; the `set_program_header` edit sets it (and the Program Name).
+- **Signal types:** a new signal takes its pin's type from the library (a Serial Send's `out$` gets a serial signal), and a signal of the wrong type is refused.
 
 Every result carries a `revision`. SIMPL can renumber handles when it saves, so tools re-read after a save and never reuse old handles.
 
@@ -212,7 +213,7 @@ Optional environment variables:
 ## Development
 
 ```
-.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 190 tests (corpus tests need the local corpus)
+.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 192 tests (corpus tests need the local corpus)
 .venv\Scripts\python -m pytest                             # fast tests only
 .venv\Scripts\python -m ruff check .
 python -I tools/fetch_github_corpus.py    # download public sample programs (outside the repo)
