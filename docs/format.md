@@ -338,3 +338,22 @@ A module written for the conference-room test program (`DisplayFeedback.usp`: `B
 - **XPanel 3.0 Crestron HTML5** placed by `add_device` gets lists of 32 per type (its `Expand_by`), so serial join 1's output is O65.
 - **Unused signals:** SIMPL drops a signal nothing uses on its next save. After a join was rewired from `Level_Fb` back to `Level`, SIMPL 4.32's re-save removed `Level_Fb` and changed nothing else. `apply_edits` now removes such signals at the end of the edit (not straight away, so a pin can be disconnected and reconnected to the same signal in one call).
 - **Live check:** an RMC3 program with an XPanel 3.0 at IP ID 03 was wired from a CH5 Agent `joins.json` (two digital, one analog and one serial join, both directions). It compiled with exactly the predicted warning and notices, and SIMPL re-saved it byte for byte, also after joins were broken and restored.
+
+## SIMPL Debugger logs (M8, 2026-11-25; inferred, no real log seen yet)
+- **Where they come from:** Toolbox's SIMPL Debugger saves the Trace window to text (Logging > Save Current, or Start Logging while tracing), by default in `Documents\Crestron\Toolbox\SIMPL Debugger Logs`. File names follow `%s - %s.txt` / `%s - %s - %s.txt` (from the binary). It's written as ANSI text (`wt+`).
+- **Line templates** (strings in `SIMPL Debugger.ocx`):
+  - `$time: $signame -> $sigvalue`;
+  - `$time: [$type] : $msg`, with types Console Data, SIMPL+ Trace, User Stimulus and Signal Monitor Status;
+  - `%s: *** Timestamp %d`.
+
+  A `$sigtype` placeholder also exists, unused in these templates.
+- **Time formats:**
+  - time of day `%H:%M:%S - %m-%d-%Y` (also in a 2017 MIT log parser's example: `12:55:25 - 01-16-2015: MCU-01_Fusion_tx$ -> `);
+  - `%02d:%02d:%02d.%03d`;
+  - `%d days, %02d:%02d:%02d.%03d`;
+  - `%d ms` (relative to the previous event).
+- **Values:**
+  - digital `0`/`1` (help screenshots of the Trace window and its clipboard copy);
+  - analog in the chosen display format (`%04Xh`, `%2.3f%%`, signed or unsigned decimal, or a time);
+  - serial with non-printables as `\x%02X` (or `.` in ASCII mode).
+- **Names:** module signals are prefixed `::` (help: Include Module Signals). The clipboard copy is tab-separated time, value, name.

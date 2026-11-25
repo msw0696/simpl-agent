@@ -6,7 +6,7 @@ An [MCP](https://modelcontextprotocol.io) server that lets Claude read, check, e
 
 You ask in plain English ("why doesn't the projector turn off?", "what will SIMPL warn about?", "add a TSW-1070 at IP ID 03"). Claude answers by reading the real program through these tools. It doesn't guess from the raw text.
 
-> **Status (2026-11-25):** M0 to M6 are done and checked against SIMPL 4.32's own saves and compiles: reading, checking, editing, devices, new programs and **SIMPL+ modules** (writing, compiling and placing them, drop-down parameters, and warnings when a placed module's pins change). A real conference-room program built end to end compiled clean. See the [roadmap](#roadmap).
+> **Status (2026-11-25):** M0 to M7 are done and checked against SIMPL 4.32's own saves and compiles: reading, checking, editing, devices, new programs and **SIMPL+ modules** (writing, compiling and placing them, drop-down parameters, and warnings when a placed module's pins change), and **touch-panel joins** checked and wired from CH5 Agent's join maps. **M8**, reading saved Debugger traces, is built but not yet checked against a real saved log. A real conference-room program built end to end compiled clean. See the [roadmap](#roadmap).
 >
 > This is a personal project, built for one programmer's own use. It is not a Crestron product and isn't affiliated with Crestron.
 
@@ -22,7 +22,7 @@ SIMPL Windows programs are large, flat graphs of symbols and signals. They're sa
 
 ## Tools
 
-26 tools. Every call is logged to `%LOCALAPPDATA%\SimplAgent\audit.jsonl`.
+27 tools. Every call is logged to `%LOCALAPPDATA%\SimplAgent\audit.jsonl`.
 
 | Group | Tool | What it does |
 |---|---|---|
@@ -49,6 +49,7 @@ SIMPL Windows programs are large, flat graphs of symbols and signals. They're sa
 | | `simpl_open` | Open a program in SIMPL without admin rights, so SIMPL Agent can save and reload it there |
 | | `simpl_save` | Save the program in SIMPL; edits then go ahead without asking, and SIMPL reloads them automatically |
 | Compile | `compile_program` | Compile in SIMPL Windows unattended and compare SIMPL's messages with `find_problems` |
+| Traces | `read_trace` | Read a saved SIMPL Debugger log: signal changes, events and timestamps with a per-signal summary; with the program, check the names and show what drove a signal's changes |
 | Panels | `check_panel_joins` | Check a touch panel's joins (CH5 Agent's `joins.json`) against what the program wires on that panel: missing, different and unused joins, and a ready fix for the missing ones |
 | SIMPL+ | `splus_reference` | Look up functions, declarations, directives, events and compiler errors in Crestron's SIMPL+ Language Reference (installed with SIMPL) |
 | | `splus_compile` | Compile a SIMPL+ module with Crestron's own SPlusCC (no window, no admin): errors and warnings per target with the help's explanation, and the pins SIMPL will show |
@@ -110,8 +111,8 @@ These are built into the tools and the skill:
 | **M4** Devices | Device tree, free IDs, adding and removing devices, frames, cards, drivers, panel joins | ✅ Matches SIMPL 4.32's own saves |
 | **M5** New programs | Start a program from scratch | ✅ `new_program`: 13 processors proven identical to SIMPL's File > New (CP3, CP3N, CP4, CP4N, PRO3, PRO4, AV4, MC3, MC4, RMC3, RMC4, DIN-AP4, MPC3-302) |
 | **M6** SIMPL+ | Write, compile and place SIMPL+ modules | ✅ Checked in SIMPL 4.32: drop-downs, changed pins; `splus_reference`, `splus_compile` |
-| **M7** Touch panels | Check joins between program and panel | 🔨 `check_panel_joins` and `wire_joins` from CH5 Agent's `joins.json` work and are checked in SIMPL 4.32 |
-| **M8** Debugger traces | Read saved Debugger traces | Later |
+| **M7** Touch panels | Check joins between program and panel | ✅ For CH5 Agent's `joins.json`: `check_panel_joins`, `wire_joins {joins_file}`; checked in SIMPL 4.32 |
+| **M8** Debugger traces | Read saved Debugger traces | 🔨 `read_trace` built; not yet checked against a real saved log |
 
 **The first version (M0 to M3) is done (2026-11-24):** a fresh Claude Code session used SIMPL Agent in plain English to explain a program, check it (matching SIMPL's F12 exactly) and add a One Shot. SIMPL reloaded the edit and compiled it exactly as predicted.
 
@@ -193,7 +194,7 @@ These are built into the tools and the skill:
 
   **The fix:** `remove_symbol` and `add_module` with `connect` by name in one `apply_edits`. SIMPL compiled both re-placed test programs as predicted and re-saved them byte for byte. When SIMPL has marked a module incomplete, it also marks every folder above it; `remove_symbol` clears those marks once nothing incomplete is left, as SIMPL does.
 
-### M7: Touch panels 🔨 (2026-11-25)
+### M7: Touch panels ✅ (2026-11-25)
 
 - **Source:** the join map that CH5 Agent, a separate personal tool, writes for the CH5 panels it generates (`joins.json`: each join's type, number and SIMPL signal `in`/`out`, the XPanel's IP ID, and joins with no SIMPL name yet). VT Pro-e and Construct files aren't read.
 - **`check_panel_joins`** finds the panel, XPanel or EISC at the map's IP ID (or takes a symbol) and compares each join direction:
@@ -210,9 +211,18 @@ These are built into the tools and the skill:
   - Every wired pin on the panel symbols in the SIMPL 4.3x corpus files reads back as exactly one join, and rewiring each panel from its own joins leaves the file byte for byte.
   - Live in SIMPL 4.32: an RMC3 program with an XPanel 3.0 at IP ID 03, wired from CH5 Agent's test `joins.json`. Its digital, analog and serial joins compiled with exactly the predicted messages and re-saved byte for byte, including after breaking and restoring joins.
 
+### M8: Debugger traces 🔨 (2026-11-25)
+
+- **`read_trace`** reads a log saved by Toolbox's SIMPL Debugger (Logging > Save Current or Start Logging, a `.txt` in `Documents\Crestron\Toolbox\SIMPL Debugger Logs` by default). It returns:
+  - every signal change, event (SIMPL+ `Trace()` output, console data, user stimulus) and timestamp, filtered by `query` and paged;
+  - a per-signal summary: number of changes, first and last time, last value.
+- **With the program,** it adds each signal's type and lists traced names the program doesn't have (another version, or another program on the processor). Module signals (`::` prefix) are counted separately.
+- **`signal`** shows each change of one signal with the symbols that drive it in the program, and the last value the trace showed on each of their inputs. That's evidence for "why did this change"; SIMPL Agent doesn't evaluate the logic, and modules are opaque.
+- **The layout is inferred, not yet seen.** No saved log was available, and making one needs a running processor, which SIMPL Agent never touches. The line shapes come from the Debugger's own format strings in `SIMPL Debugger.ocx` (`$time: $signame -> $sigvalue`, `$time: [$type] : $msg`, `*** Timestamp n`, four time formats). They're backed by the Toolbox help's screenshots (digital values as 0/1) and a 2017 MIT-licensed log parser's example line. Any line that doesn't fit is counted and shown, so the first real log will say whether the parser is right.
+- **Privacy:** traces are client data, like programs. The audit log records the trace's path, never its content.
+
 ### Later
 
-- **M8 Debugger traces:** read saved SIMPL Debugger traces to explain what happened.
 - **Probably never:** live signal watching. If it is ever built, it will be read-only.
 
 ### Not planned
