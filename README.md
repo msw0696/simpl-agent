@@ -52,7 +52,8 @@ SIMPL Windows programs are large, flat graphs of symbols and signals. They're sa
 - **Folders and logic:** `add_folder`, `add_symbol` (126 simple logic symbols proven in SIMPL 4.3x files), `move_symbol`, `remove_symbol`.
 - **Wiring and settings:** `connect` (or disconnect), `set_parameter`, `set_comment`, `rename_signal`, `rename_folder`. New signals are created when a pin names them.
 - **Modules:** `add_module` places a macro or SIMPL+ module, wired by pin name. Unused required pins go on SIMPL's `//__…_reserved__` placeholders.
-- **Devices:** `add_device` places a device at an IP ID or Cresnet ID the user chooses, or a card in a frame's slot; `remove_device` removes one with everything inside it (see [M4](#m4-devices-in-progress)).
+- **Devices:** `add_device` places a device at an IP ID or Cresnet ID the user chooses, or a card in a frame's slot; `remove_device` removes one with everything inside it; `wire_joins` connects a panel's or EISC's digital, analog and serial joins by number, growing its join lists as needed (see [M4](#m4-devices-in-progress)).
+- **New programs:** `new_program` (a tool of its own) writes an empty program for a processor exactly as SIMPL's File > New does.
 
 Every result carries a `revision`. SIMPL can renumber handles when it saves, so tools re-read after a save and never reuse old handles.
 
@@ -155,6 +156,7 @@ These are built into the tools and the skill:
   - It rebuilds SIMPL 4.32's own saves byte for byte: a TSW-1070 and an EISC, and a DM-MD8x8 with input cards, a DM-NVX-36x, a CEN-IO-COM-102, a CEN-RGBHV8x4, XPanel and TSW panels, placed in SIMPL by SIMPL Agent driving SIMPL's own window (`tools/simpl_gui.py`).
   - `tools/prove_devices.py` and `tools/prove_frames.py` rebuild every device and frame in the 380 public programs from today's libraries. 770 device types match; 63 frames rebuild identically; 238 of 239 cards in slots rebuild identically. In modern files the only differences left are things users attach later (logic modules, HDBaseT links, replaced drivers).
   - Automatic compiles: 15 device types in one program; a DM-MD8x8, DM-NVX-36x and ST-IO together; a DM-MD8x8 with two input cards plus a DM-TX-201-C. All 0 errors, 0 warnings and 0 notices.
+- **Panels:** `wire_joins` maps joins to pins (digital first, then analog, then serial, for inputs and outputs; all 5,045 wired panel pins in modern public files fit) and grows a list's inputs and outputs together when a join is past its end. SIMPL re-saved a grown, wired TSW-1070 byte for byte, and it compiled with exactly the predicted messages.
 - **Next:** DM output cards and COM/IR drivers, devices with required pins, and device parameters without defaults (e.g. a TCP/IP Client's port).
 
 ### Later
@@ -203,7 +205,7 @@ Optional environment variables:
 ## Development
 
 ```
-.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 181 tests (corpus tests need the local corpus)
+.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 183 tests (corpus tests need the local corpus)
 .venv\Scripts\python -m pytest                             # fast tests only
 .venv\Scripts\python -m ruff check .
 python -I tools/fetch_github_corpus.py    # download public sample programs (outside the repo)

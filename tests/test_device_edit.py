@@ -327,3 +327,45 @@ def test_new_program_tool_never_overwrites(libs, tmp_path: Path) -> None:
     r2 = t.call("apply_edits", {"path": str(p), "revision": r["revision"], "summary": "panel",
                                 "edits": [{"op": "add_device", "device": "TSW-1070", "address": "03"}]})
     assert r2["ok"], r2
+
+
+def _wired_panel(libs):
+    ed = editor(libs)
+    sym = ed.add_device(libs[1], "TSW-1070", "03")
+    ed.wire_joins(f"#{sym}", [{"type": "serial", "join": 1, "in": "Room_Name_Fb"},
+                              {"type": "analog", "join": 2, "in": "Volume_Fb", "out": "Volume_Set"},
+                              {"type": "digital", "join": 10, "in": "Power_On_Fb", "out": "Power_On_Press"}])
+    ed.wire_joins(f"#{sym}", [{"type": "digital", "join": 40, "out": "Page_40_Press"},
+                              {"type": "analog", "join": 35, "in": "Level_35"}])
+    return ed, sym
+
+
+def test_wire_joins_grows_lists_and_moves_later_pins(libs) -> None:
+    from simpl_agent.smw.joins import list_sizes
+
+    ed, sym = _wired_panel(libs)
+    r = ed.prog.symbols[sym].record
+    assert list_sizes(r) == ([40, 35, 32], [40, 35, 32])
+    names = {h: s.name for h, s in ed.prog.signals.items()}
+    pins = {k: names[int(v)] for k, v in r.lines if k and k[0] in "IO" and k[1:].isdigit()}
+    # Digital 40 / analog 35: analog join 2 is I42, serial join 1 is I76 (moved up from I34 and I65).
+    assert pins == {"I10": "Power_On_Fb", "I42": "Volume_Fb", "I75": "Level_35", "I76": "Room_Name_Fb",
+                    "O10": "Power_On_Press", "O40": "Page_40_Press", "O42": "Volume_Set"}
+    assert structural_problems(ed.prog) == set()
+    # SIMPL 4.32 opened this and re-saved it byte for byte (f12-round8).
+    if (DATA / "joins-resaved.smw").exists():
+        assert same_except_name(ed.raw.to_bytes(), (DATA / "joins-resaved.smw").read_bytes())
+
+
+def test_wire_joins_refusals(libs) -> None:
+    ed, sym = _wired_panel(libs)
+    before = ed.raw.to_bytes()
+    for joins, msg in [([{"type": "digital", "join": 3, "in": "Volume_Fb"}], "is analog"),
+                       ([{"type": "video", "join": 1, "in": "x"}], "digital, analog or serial"),
+                       ([{"type": "digital", "join": 0, "in": "x"}], "join number"),
+                       ([{"type": "digital", "join": 5}], "in and/or out")]:
+        with pytest.raises(EditError, match=msg):
+            ed.wire_joins(f"#{sym}", joins)
+        assert ed.raw.to_bytes() == before
+    with pytest.raises(EditError, match="isn't a panel-style symbol"):
+        ed.wire_joins("#9", [{"type": "digital", "join": 1, "in": "x"}])  # a COM driver

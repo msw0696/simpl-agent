@@ -694,6 +694,12 @@ class Editor:
 
         return add_device(self, devlib, device, address, network)
 
+    def wire_joins(self, symbol: str | int, joins: list[dict]) -> list[str]:
+        """Connect a panel's or EISC's joins by type and number; see joins.py."""
+        from .joins import wire_joins
+
+        return wire_joins(self, symbol, joins)
+
     def remove_device(self, devlib, device: str | int) -> list[str]:
         """Remove a device and everything inside it, as SIMPL's Delete does; see device_edit.py."""
         from .device_edit import remove_device
