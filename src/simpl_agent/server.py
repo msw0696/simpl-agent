@@ -1083,14 +1083,26 @@ class Tools(EditTools):
         sg = next((s for s in prog.signals.values() if s.name.lower() == key), None)
         if sg is None:
             raise ToolError(f"no signal named {signal!r} in the program")
+        if sg.name.startswith("//") or sg.handle in set(prog.builtin_signals.values()):
+            raise ToolError(f"{sg.name!r} is a built-in or placeholder signal, not one the Debugger traces")
         flow = an.signal_flow(prog)
         drivers = []
-        for h, _pin in flow.drivers.get(sg.handle, []):
+        handles = list(dict.fromkeys(h for h, _pin in flow.drivers.get(sg.handle, [])))
+        for h in handles[:10]:
             s = prog.symbols[h]
+            if s.device is not None:  # a panel press, a device's feedback: it comes from outside the logic
+                drivers.append({"symbol": f"#{h}", "name": an.display_name(s, lib), "device": f"#{s.device}",
+                                "note": "comes from the device itself (a press, feedback or received data)"})
+                continue
             ls = self._definition(p, lib, s)
-            ins = [(an.pin_label(ls, s, "I", n), prog.signals[x].name if x in prog.signals else f"#{x}")
-                   for n, x in sorted(s.inputs.items())]
-            drivers.append((h, an.display_name(s, lib), an.simpl_number(prog, h), ins))
+            ins = [(an.pin_label(ls, s, "I", n), prog.signals[x].name)
+                   for n, x in sorted(s.inputs.items()) if x in prog.signals and not prog.signals[x].name.startswith("//")
+                   and x not in set(prog.builtin_signals.values())]
+            drivers.append({"symbol": f"#{h}", "name": an.display_name(s, lib), "simpl_number": an.simpl_number(prog, h),
+                            "inputs": [{"pin": pin, "signal": name} for pin, name in ins[:40]],
+                            **({"more_inputs": len(ins) - 40} if len(ins) > 40 else {}),
+                            "_all": ins})
+        watch = {name.lower(): (d["symbol"], pin, name) for d in drivers for pin, name in d.pop("_all", [])}
         last: dict[str, tuple[str, str]] = {}
         changes = []
         cap = max(1, min(int(limit), 500))
@@ -1099,17 +1111,18 @@ class Tools(EditTools):
                 continue
             k = e.signal.lower()
             if k == key and len(changes) < cap:
-                changes.append({"line": e.line, "time": e.time, "value": e.value, "drivers": [
-                    {"symbol": f"#{h}", "name": nm, "simpl_number": sn,
-                     "inputs": [{"pin": pin, "signal": name,
-                                 **({"last_seen": last[name.lower()][1], "at": last[name.lower()][0]}
-                                    if name.lower() in last else {"last_seen": "not seen in trace"})}
-                                for pin, name in ins]}
-                    for h, nm, sn, ins in drivers]})
+                seen = [{"symbol": w[0], "pin": w[1], "signal": w[2], "last_seen": last[s][1], "at": last[s][0]}
+                        for s, w in watch.items() if s in last]
+                changes.append({"line": e.line, "time": e.time, "value": e.value,
+                                "inputs_seen_before": seen[:20],
+                                "inputs_not_seen_yet": sum(1 for s in watch if s not in last)})
             last[k] = (e.time, e.value)
-        return {"signal": sg.name, "type": sg.type, "changes": changes,
-                "driven_by": [{"symbol": f"#{h}", "name": nm, "simpl_number": sn} for h, nm, sn, _ in drivers]
-                or "nothing in the program drives it (a device input, or set from the Debugger)"}
+        return {"signal": sg.name, "type": sg.type,
+                "driven_by": drivers or "nothing in the program drives it (a device input, or set from the Debugger)",
+                **({"more_drivers": len(handles) - 10} if len(handles) > 10 else {}),
+                "changes": changes,
+                "note": "Order is the trace's line order: an input logged just after the change at the same time "
+                        "may really have come first."}
 
     def check_panel_joins(self, path: str, joins_file: str, symbol: str | None = None,
                           limit: int = 200) -> dict[str, Any]:

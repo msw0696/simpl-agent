@@ -75,15 +75,22 @@ def test_read_trace_tool(tmp_path: Path, tiny: bytes) -> None:
     assert r["signals"][0] == {"signal": "room_enable", "changes": 2, "first": "08:00:00.000",
                                "last": "08:00:02.000", "last_value": "1", "type": "digital"}
     assert r["not_in_program"] == ["old_name"] and "inside modules" in r["note"]
+    (drv,) = r["what_drove"]["driven_by"]
+    assert drv["symbol"] == "#5" and [i["signal"] for i in drv["inputs"]] == ["room_enable", "room_level"]
     (change,) = r["what_drove"]["changes"]
     assert change["value"] == "1" and change["time"] == "08:00:02.010"
-    (drv,) = change["drivers"]
-    assert drv["symbol"] == "#5"
-    assert [(i["signal"], i["last_seen"]) for i in drv["inputs"]] == [("room_enable", "1"), ("room_level", "50.000%")]
+    assert [(i["signal"], i["last_seen"]) for i in change["inputs_seen_before"]] == [
+        ("room_enable", "1"), ("room_level", "50.000%")]
+    assert change["inputs_not_seen_yet"] == 0
     q = t.call("read_trace", {"path": str(log), "query": "stimulus"})
     assert [e.get("event") for e in q["entries"]] == ["User Stimulus"]
     audit = (tmp_path / "home" / "audit.jsonl").read_text("utf-8")
     assert "trace.txt" in audit and "50.000%" not in audit and "User set" not in audit  # paths, not trace text
+
+
+def test_byte_order_mark_on_the_first_line() -> None:
+    res = parse_trace(["\ufeff10:00:00.000: a -> 1"])
+    assert res["unparsed"] == [] and res["entries"][0].signal == "a"
 
 
 def test_read_trace_file_limits(tmp_path: Path) -> None:

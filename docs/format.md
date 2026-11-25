@@ -348,7 +348,7 @@ A module written for the conference-room test program (`DisplayFeedback.usp`: `B
 
   A `$sigtype` placeholder also exists, unused in these templates.
 - **Time formats:**
-  - time of day `%H:%M:%S - %m-%d-%Y` (also in a 2017 MIT log parser's example: `12:55:25 - 01-16-2015: MCU-01_Fusion_tx$ -> `);
+  - time of day `%H:%M:%S - %m-%d-%Y` (also the shape in the example comment of rdriscoll/CrestronToolboxSIMPLDebuggerLogParser, MIT, 2017: `HH:MM:SS - MM-DD-YYYY: <signal> -> <value>`);
   - `%02d:%02d:%02d.%03d`;
   - `%d days, %02d:%02d:%02d.%03d`;
   - `%d ms` (relative to the previous event).

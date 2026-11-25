@@ -95,6 +95,8 @@ def parse_trace(text_lines, names: set[str] | None = None) -> dict:
     prev: float | None = None
     for i, raw in enumerate(text_lines, 1):
         line = raw.rstrip("\r\n")
+        if i == 1:
+            line = line.lstrip("\ufeff\u00ef\u00bb\u00bf")  # a byte-order mark, read as UTF-8 or cp1252
         if not line.strip():
             continue
         if "\t" in line:  # the Trace window's clipboard copy: time, value, name
