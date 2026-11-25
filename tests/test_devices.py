@@ -46,7 +46,8 @@ def test_device_rules_hold_in_every_public_program() -> None:
 @pytest.mark.skipif(not GITHUB_CORPUS.is_dir(), reason="no corpus")
 def test_pin_types_match_every_public_program() -> None:
     # add_symbol/connect type new signals and refuse wrong-typed ones from Editor.pin_types,
-    # so it must agree with every wired pin SIMPL saved (13,514 logic + 1,239 device pins).
+    # so it must agree with every wired pin SIMPL saved (13,514 logic + 1,239 single-list device
+    # pins, and since 2026-11-25 the 64,525 pins of multi-list devices: panels, EISCs, dimmers).
     from simpl_agent.catalog.symlib import DEFAULT_SYMLIB, load_symlib
     from simpl_agent.smw.edit import Editor
 
@@ -72,4 +73,4 @@ def test_pin_types_match_every_public_program() -> None:
                         checked += 1
                         if sg.type not in types:
                             bad.append((f.name, s.code, f"{letter}{n}", sg.name, sg.type, types))
-    assert checked > 10000 and not bad, bad[:5]
+    assert checked > 70000 and not bad, bad[:5]

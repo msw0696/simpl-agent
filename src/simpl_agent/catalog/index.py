@@ -16,7 +16,7 @@ from pathlib import Path
 
 from .symlib import DEFAULT_SYMLIB, LibSymbol, SymbolLibrary, parse_tio
 
-INDEX_VERSION = 5
+INDEX_VERSION = 6
 KEEP_FIELDS = {
     "Name", "Code", "Hint", "ObjVer", "Smpl-C", "DeviceCode", "SymbolTree", "ProgramTree",
     "NumFixedInputs", "NumFixedOutputs", "NumFixedParams",
@@ -25,7 +25,9 @@ KEEP_FIELDS = {
     "CDSReleaseStatus", "HelpID", "Expand_by", "MinVariableParams", "CheckCnx",
 }
 KEEP_PREFIXES = ("InputCue", "OutputCue", "ParamCue", "InputSigType", "OutputSigType", "ParamSigType", "DefVal",
-                 "MinVariableInputsList", "MinVariableOutputsList")
+                 "MinVariableInputsList", "MinVariableOutputsList",
+                 # every pin type of lists 2 and 3, so device pins get their list's type (~0.7 MB)
+                 "InputList2SigType", "OutputList2SigType", "InputList3SigType", "OutputList3SigType")
 # Device symbols (device_edit.symbol_counts) need to know which pin lists exist; the first
 # name of each list is enough (all of them would add ~50 MB).
 # ... and the first 8 names and types of each list, so device pins can be wired by name (TX$, RX$ ...).

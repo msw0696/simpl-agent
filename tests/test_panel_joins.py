@@ -151,3 +151,17 @@ def test_every_corpus_panel_reads_back_and_rewires_unchanged(libs) -> None:  # n
             panels += 1
             pins += got
     assert panels > 50, panels
+
+
+def test_connect_types_new_signals_by_pin_list(libs) -> None:  # noqa: F811
+    """connect on a multi-list device: a new signal takes its pin list's type (digital, analog,
+    serial), and a signal of another type is refused (64,525 corpus pins, 2026-11-25)."""
+    ed, sym = _wired_panel(libs)  # lists of 40 digital, 35 analog, 32 serial
+    ed.connect(f"#{sym}", "I43", "Volume_Fb_2")  # analog join 3
+    ed.connect(f"#{sym}", "O77", "Room_Name_Out")  # serial join 2
+    ed.connect(f"#{sym}", "I5", "Mute_Fb")  # digital join 5
+    assert ed.prog.signals[ed.find_signal("Volume_Fb_2")].type == "analog"
+    assert ed.prog.signals[ed.find_signal("Room_Name_Out")].type == "serial"
+    assert ed.prog.signals[ed.find_signal("Mute_Fb")].type == "digital"
+    with pytest.raises(EditError, match="takes analog signals"):
+        ed.connect(f"#{sym}", "I44", "Power_On_Fb")

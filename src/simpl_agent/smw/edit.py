@@ -296,8 +296,11 @@ class Editor:
         if ls is None:
             return []
         f = ls.fields
-        if any("List2" in k or "List3" in k for k in f):
-            return []
+        multi = ls.fields.get("HasExtraPinLists") == "True" or any("List2" in k or "List3" in k for k in f)
+        if multi:
+            if f.get("DeviceCode", "0") in ("", "0") or record is None:
+                return []
+            return Editor._device_list_pin_type(f, letter, n, record)
         if f.get("DeviceCode", "0") not in ("", "0"):
             n1 = record.get("n1I" if letter == "I" else "n1O") if record is not None else None
             if (record is None or any(k in record for k in ("n2I", "n2O", "n3I", "n3O"))
@@ -307,6 +310,38 @@ class Editor:
         if "any" in t:
             return []
         return [k for k in ("digital", "analog", "serial") if k in t or (k == "serial" and "string" in t)]
+
+    @staticmethod
+    def _device_list_pin_type(f: dict[str, str], letter: str, n: int, record: Record) -> list[str]:
+        """A pin's type on a device symbol with several pin lists (panels, EISCs, dimmers...).
+
+        Pins are numbered through list 1, then list 2, then list 3, with the placed record's sizes
+        (n1I, n2I; n1O, mO - n1O). A pin takes its own list's library type (the nearest one at or
+        before it: arrays share it); an untyped list is digital, analog, serial for lists 1, 2, 3.
+        Checked on every wired pin of such device symbols in the SIMPL 4.x corpus: 64,525 pins,
+        0 exceptions (2026-11-25). A DIN-1DIM4 placed with no list-1 pins starts with list 2, so
+        its pin 1 is analog although InputSigType1 says Digital.
+        """
+        def g(k: str) -> int:
+            v = record.get(k)
+            return int(v) if v and v.isdigit() else 0
+
+        side = "Input" if letter == "I" else "Output"
+        n1 = g("n1I") if letter == "I" else g("n1O")
+        n2 = g("n2I") if letter == "I" else g("mO") - g("n1O")
+        if n <= n1:
+            lst, k, key = 1, n, f"{side}SigType"
+        elif n <= n1 + n2:
+            lst, k, key = 2, n - n1, f"{side}List2SigType"
+        else:
+            lst, k, key = 3, n - n1 - n2, f"{side}List3SigType"
+        j = max((i for i in range(1, k + 1) if f.get(f"{key}{i}")), default=None)
+        t = (f.get(f"{key}{j}") or "").lower() if j else ""
+        if not t:
+            return [("digital", "analog", "serial")[lst - 1]]
+        if "any" in t:
+            return []
+        return [x for x in ("digital", "analog", "serial") if x in t or (x == "serial" and ("string" in t or "buffer" in t))]
 
     def _typed_signal(self, ref: str | int | None, ls: LibSymbol | None, letter: str, n: int,
                       default_type: str, record: Record | None = None) -> int | None:

@@ -357,3 +357,12 @@ A module written for the conference-room test program (`DisplayFeedback.usp`: `B
   - analog in the chosen display format (`%04Xh`, `%2.3f%%`, signed or unsigned decimal, or a time);
   - serial with non-printables as `\x%02X` (or `.` in ASCII mode).
 - **Names:** module signals are prefixed `::` (help: Include Module Signals). The clipboard copy is tab-separated time, value, name.
+
+## Pin types on multi-list devices (2026-11-25)
+- **The rule:** device symbols with several pin lists (panels, XPanels, EISCs, dimmers...) number their pins through list 1, then list 2, then list 3, using the placed record's sizes (`n1I`, `n2I`; `n1O`, `mO - n1O`).
+- **A pin's type:**
+  - it takes its own list's type from the library (`InputSigType`, `InputList2SigType`, `InputList3SigType`, and the `Output` ones), using the nearest entry at or before it;
+  - an untyped list is digital, analog and serial for lists 1, 2 and 3.
+- **Evidence:** this held for all 64,525 wired pins of such devices in the SIMPL 4.x corpus, with 0 exceptions. It's why a DIN-1DIM4 placed with no list-1 pins has an analog pin 1 although `InputSigType1` says Digital.
+- **Live check:** `connect` put new analog and serial signals on an XPanel 3.0's analog and serial joins with no type given. It compiled with exactly the predicted messages, and SIMPL re-saved it byte for byte.
+- **The slim index** now keeps every list-2/3 type (about 0.7 MB). It gives the same pin types as the full library on all 155,914 device pins in the corpus.
