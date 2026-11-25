@@ -3,7 +3,8 @@
 SIMPL's manifest asks for administrator rights, and Windows then blocks normal programs
 from seeing or clicking its window. Started with __COMPAT_LAYER=RunAsInvoker it runs with
 the user's own rights, and this tool can screenshot it and send it the mouse and keyboard.
-It uses the real cursor: nobody else should use the PC while it runs.
+It uses the real cursor: nobody else should use the PC while it runs. Keys and clicks are refused
+unless SIMPL is the window in front, and menu items are chosen by command ID, never "Transfer".
 
     python tools/simpl_gui.py launch [file.smw]   start SIMPL without admin rights (optionally a program)
     python tools/simpl_gui.py shot [out.png]       screenshot of SIMPL's window (window coordinates)
@@ -13,6 +14,7 @@ It uses the real cursor: nobody else should use the PC while it runs.
     python tools/simpl_gui.py drag X1 Y1 X2 Y2     drag with the left button
     python tools/simpl_gui.py type "text"          type text
     python tools/simpl_gui.py keys ctrl+s          press a key combination (alt+f, enter, esc, f12, tab ...)
+    python tools/simpl_gui.py menu "File/Save As"  choose a menu item by name (Transfer is blocked)
     python tools/simpl_gui.py maximize | close
 Coordinates are pixels relative to the top-left of SIMPL's main window (or of the foreground
 SIMPL dialog when one is open: `shot` says which).
@@ -108,6 +110,18 @@ def target() -> tuple[int, str, tuple[int, int, int, int]]:
     return main[0], main[1], main[2]
 
 
+def simpl_in_front() -> bool:
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), ctypes.byref(pid))
+    return pid.value in simpl_pids()
+
+
+def _guard() -> None:
+    """Never send input to anything but SIMPL: another program (an unsaved design, a terminal) could be in front."""
+    if not simpl_in_front():
+        raise SystemExit("SIMPL isn't the window in front; refusing to send input")
+
+
 def focus() -> tuple[int, str, tuple[int, int, int, int]]:
     h, t, r = target()
     if user32.GetForegroundWindow() == h:
@@ -119,6 +133,7 @@ def focus() -> tuple[int, str, tuple[int, int, int, int]]:
         _send(_mouse(MOUSEEVENTF_MOVE, r[0] + 200, r[1] + 12))
         _send(_mouse(LEFTDOWN, r[0] + 200, r[1] + 12), _mouse(LEFTUP, r[0] + 200, r[1] + 12))
         time.sleep(0.3)
+    _guard()
     return target()
 
 
@@ -145,12 +160,14 @@ VK = {"ctrl": 0x11, "alt": 0x12, "shift": 0x10, "enter": 0x0D, "esc": 0x1B, "tab
 
 
 def keys(combo: str) -> None:
+    _guard()
     parts = combo.lower().split("+")
     vks = [VK[p] if p in VK else ord(p.upper()) for p in parts]
     _send(*[_key(v) for v in vks], *[_key(v, up=True) for v in reversed(vks)])
 
 
 def type_text(text: str) -> None:
+    _guard()
     for ch in text:
         _send(_key(0, scan=ord(ch), unicode=True), _key(0, up=True, scan=ord(ch), unicode=True))
         time.sleep(0.01)
@@ -187,6 +204,41 @@ def drag(x1: int, y1: int, x2: int, y2: int) -> None:
         time.sleep(0.15)
     time.sleep(0.4)
     _send(_mouse(LEFTUP, *b))
+
+
+BLOCKED_MENU_WORDS = ("transfer", "upload", "send to", "load to")  # never talk to a processor
+
+
+def _menu_text(hmenu: int, i: int) -> str:
+    buf = ctypes.create_unicode_buffer(256)
+    user32.GetMenuStringW(hmenu, i, buf, 256, 0x400)  # MF_BYPOSITION
+    return buf.value.replace("&", "").split("\t")[0].strip().rstrip(".").strip()
+
+
+def menu(path: str) -> None:
+    """Choose a menu item by name, e.g. 'File/Save As' or 'Project/Configure System', by sending its
+    command ID to SIMPL's main window (no clicking, so nothing else can be hit). Transfer is blocked."""
+    if any(w in path.lower() for w in BLOCKED_MENU_WORDS):
+        raise SystemExit(f"menu item {path!r} is blocked: SIMPL Agent never talks to a processor")
+    ws = windows()
+    if not ws:
+        raise SystemExit("SIMPL isn't running")
+    main = max(ws, key=lambda w: (w[2][2] - w[2][0]) * (w[2][3] - w[2][1]))[0]
+    hmenu = user32.GetMenu(main)
+    parts = [p.strip().rstrip(".").lower() for p in path.split("/")]
+    for depth, want in enumerate(parts):
+        n = user32.GetMenuItemCount(hmenu)
+        names = [_menu_text(hmenu, i) for i in range(n)]
+        hit = next((i for i, nm in enumerate(names) if nm.lower() == want), None)
+        if hit is None:
+            raise SystemExit(f"no menu item {want!r}; there are {names}")
+        if depth == len(parts) - 1:
+            cmd = user32.GetMenuItemID(hmenu, hit)
+            if cmd in (0, 0xFFFFFFFF):
+                raise SystemExit(f"{path!r} is a submenu, not a command")
+            user32.PostMessageW(main, 0x0111, cmd, 0)  # WM_COMMAND
+            return
+        hmenu = user32.GetSubMenu(hmenu, hit)
 
 
 def shot(out: Path | None = None, whole: bool = False) -> Path:
@@ -242,6 +294,8 @@ def main(argv: list[str]) -> None:
     elif cmd == "keys":
         focus()
         keys(rest[0])
+    elif cmd == "menu":
+        menu(rest[0])
     elif cmd == "maximize":
         h, _, _ = target()
         user32.ShowWindow(h, 3)

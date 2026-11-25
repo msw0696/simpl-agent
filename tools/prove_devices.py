@@ -115,8 +115,8 @@ def check_device(prog, d, devlib, lib, same_db: bool) -> tuple[str, list[str]]:
             why.append(f"counts {got} below fresh {pc}")
         if s.record.get("Cmn1") not in (None, d.name):
             pass  # renamed in the logic view: user's choice
-        if same_db and s.record.get("Nm") != ls.fields.get("Name"):
-            why.append(f"symbol Nm {s.record.get('Nm')!r} != {ls.fields.get('Name')!r}")
+        if same_db and s.record.get("Nm") != dd.name:
+            why.append(f"symbol Nm {s.record.get('Nm')!r} != {dd.name!r}")
     if why:
         return "fail", why
     return "ok", (["expanded"] if expanded else [])

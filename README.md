@@ -153,7 +153,7 @@ These are built into the tools and the skill:
   - **Which devices:** any whose pins are all optional and whose parameters have known defaults (touch panels, XPanels, EISCs, DM frames and endpoints, NVX and many more). Others are refused with the reason.
 - **Proof:**
   - It rebuilds SIMPL 4.32's own saves byte for byte: a TSW-1070 and an EISC, and a DM-MD8x8 with input cards, a DM-NVX-36x, a CEN-IO-COM-102, a CEN-RGBHV8x4, XPanel and TSW panels, placed in SIMPL by SIMPL Agent driving SIMPL's own window (`tools/simpl_gui.py`).
-  - `tools/prove_devices.py` and `tools/prove_frames.py` rebuild every device and frame in the 380 public programs from today's libraries. 719 device types match; 47 frames rebuild identically; 238 of 239 cards in slots rebuild identically.
+  - `tools/prove_devices.py` and `tools/prove_frames.py` rebuild every device and frame in the 380 public programs from today's libraries. 770 device types match; 63 frames rebuild identically; 238 of 239 cards in slots rebuild identically. In modern files the only differences left are things users attach later (logic modules, HDBaseT links, replaced drivers).
   - Automatic compiles: 15 device types in one program; a DM-MD8x8, DM-NVX-36x and ST-IO together; a DM-MD8x8 with two input cards plus a DM-TX-201-C. All 0 errors, 0 warnings and 0 notices.
 - **Next:** DM output cards and COM/IR drivers, devices with required pins, and device parameters without defaults (e.g. a TCP/IP Client's port).
 
