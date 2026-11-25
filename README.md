@@ -177,7 +177,18 @@ These are built into the tools and the skill:
 - **Proof:** a feedback-parser module written for the conference-room program compiled with SPlusCC, was placed on COM 1's `rx$`, and compiled in SIMPL with 0 errors, warnings and notices. A fresh SIMPL re-saved the program byte for byte. All 156 public `.usp` files compiled in scratch copies: 113 compile, the failures I checked are SIMPL# libraries missing from their repos, and the parser accounts for every message SPlusCC counts.
 - **SIMPL keeps the module build it read first,** even after reloading the program. `compile_program` saves and restarts a SIMPL started with `simpl_open` if any of the program's `.ush` files is newer than that SIMPL. `simpl_open` waits until SIMPL has loaded the program, which took 68 s here.
 - **Drop-down parameters** (`propList`): `module_details` lists each one's options and default. `add_module` takes a listed value or its label and refuses anything else, as SIMPL's drop-down does. It stores the value and SIMPL's label (`Plb`). SIMPL 4.32 compiled a module placed this way with 0 errors, and re-saved it byte for byte. SIMPL also keeps one placed without the label, so older programs are fine either way.
-- **Not yet:** checking what SIMPL does when a placed module's pins change.
+- **Changing a placed module's pins:** SIMPL keeps a placed module's wires by **position** within each pin list, not by name. Tested in SIMPL 4.32 with a module wired on every pin, one change at a time:
+
+  | Change to the `.usp` | SIMPL |
+  |---|---|
+  | none (just recompiled) | compiles as before |
+  | pin inserted or appended | "Incomplete Symbols": won't compile |
+  | pin type changed | "Incomplete Symbols": won't compile |
+  | pin removed | compiles with notice 202; the wires shift, so one signal lands on the wrong pin and another is dropped |
+  | two pins swapped | compiles with no message; the wires are on the wrong pins |
+  | pin renamed | compiles; the wire stays (fine) |
+
+  **The fix:** note the wiring by pin name before recompiling, then `remove_symbol` and `add_module` with `connect` by name in one `apply_edits`. SIMPL compiled both re-placed test programs as predicted and re-saved them byte for byte. When SIMPL has marked a module incomplete, it also marks every folder above it; `remove_symbol` clears those marks once nothing incomplete is left, as SIMPL does.
 
 ### Later
 

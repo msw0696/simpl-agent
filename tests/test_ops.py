@@ -107,6 +107,22 @@ def test_remove_last_child_drops_mC(ed: Editor) -> None:
     assert f not in ed.prog.symbols
 
 
+def test_removing_the_last_incomplete_symbol_clears_folder_marks(ed: Editor) -> None:
+    """SIMPL marks the folders above an incomplete symbol (CF=1) and clears them once nothing
+    incomplete is left inside (seen live in SIMPL 4.32, 2026-11-25)."""
+    outer = ed.add_folder("Outer")
+    inner = ed.add_folder("Inner", parent=f"#{outer}")
+    a = ed.add_symbol(3, f"#{inner}", inputs=["room_enable", "room_out"], outputs=["a_out"])
+    b = ed.add_symbol(3, f"#{inner}", inputs=["room_enable", "room_out"], outputs=["b_out"])
+    for h in (a, b, inner, outer, 4):
+        ed.prog.symbols[h].record.set("CF", "1")
+    ed._reload()
+    ed.remove_symbol(f"#{a}")  # b is still incomplete: the marks stay
+    assert [ed.prog.symbols[h].record.get("CF") for h in (inner, outer, 4)] == ["1", "1", "1"]
+    ed.remove_symbol(f"#{b}")
+    assert [ed.prog.symbols[h].record.get("CF") for h in (inner, outer, 4)] == ["2", "2", "2"]
+
+
 def test_remove_refusals(ed: Editor, tiny: bytes) -> None:
     f = ed.add_folder("Full")
     ed.add_symbol(3, "Full", inputs=["room_enable", "room_out"], outputs=["x"])

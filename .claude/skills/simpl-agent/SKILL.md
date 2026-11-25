@@ -59,7 +59,11 @@ Tools for Crestron SIMPL Windows. They read, check and **edit** programs. Every 
    - **Drop-down parameters:** use `#BEGIN_PARAMETER_PROPERTIES` with `propList` (look it up first). Avoid backslashes in string values: SIMPL reads `\u` and similar as escapes and warns.
 4. **`splus_compile {path, targets}`** (`series4` for 4-Series, add `series3` for 3-Series programs) until it's clean. Each error comes with the help's explanation; line numbers are the compiler's own count. It fixes LF line endings first (SPlusCC silently drops everything after a `//` comment without CRLF), and its `module` field shows the pins SIMPL will show: check they're what you meant.
 5. **Place it** with `module_details` then `apply_edits add_module` (wire pins by name), then **`compile_program`**. A SIMPL that was already open keeps the module build it loaded first; `compile_program` saves and restarts one started by `simpl_open`, but ask the user to reopen an admin SIMPL.
-6. **Changing a placed module's pins** hasn't been checked against SIMPL yet: tell the user, and have them check the module in SIMPL.
+6. **Changing a placed module's pins** (adding, removing, reordering or retyping inputs/outputs): SIMPL keeps a placed module's wires **by position** in each pin list, never by name.
+   - **What goes wrong:** an added or retyped pin stops the compile ("Incomplete Symbols"). A removed pin compiles with only notice 202 ("needed adjustment"), with the wires shifted onto the wrong pins. Swapped pins compile with no message at all.
+   - **Before recompiling the `.usp`,** note each placed copy's wiring by pin name with `show_symbol`. Afterwards `show_symbol` puts the new pin names on the old positions.
+   - **Then re-place each copy** in ONE `apply_edits`: `remove_symbol` the old one, then `add_module` with `connect` by pin name, using the wiring you noted. Wire new pins as the user says.
+   - **Renaming a pin** without moving it needs nothing: SIMPL keeps the wire on the same position.
 
 ## History
 - **`edit_history`:** what SIMPL Agent changed, and whether the file was changed elsewhere since.

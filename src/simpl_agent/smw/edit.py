@@ -542,12 +542,39 @@ class Editor:
             names = [self.prog.signals[h].name for h in sorted(gone)]
             drop = {id(self.prog.signals[h].record) for h in gone}
             self.raw.items = [it for it in self.raw.items if id(it) not in drop]
+            self._reload()
+            self._clear_folder_flags(parent)
         except Exception:
             self._restore(snapshot)
             raise
         self._reload()
         self.log.add(f"removed #{s.handle}" + (f" and unused signals {names}" if names else ""))
         return names
+
+    def _incomplete_inside(self, folder: int) -> bool:
+        for c in self.prog.symbols[folder].children:
+            cs = self.prog.symbols.get(c)
+            if cs is None:
+                continue
+            if cs.code == FOLDER_CODE:
+                if self._incomplete_inside(c):
+                    return True
+            elif cs.record.get("CF") == "1":
+                return True
+        return False
+
+    def _clear_folder_flags(self, folder: int | None) -> None:
+        """SIMPL marks every folder above an incomplete symbol incomplete too (CF=1), and clears the
+        mark when nothing incomplete is left inside: a folder is never marked without an incomplete
+        symbol in it (0 of 7,547 corpus folders), and SIMPL 4.32 cleared it on re-save after a
+        changed SIMPL+ module was replaced (2026-11-25). Walks up from ``folder``."""
+        while folder is not None and folder in self.prog.symbols:
+            f = self.prog.symbols[folder]
+            if f.code != FOLDER_CODE:
+                break
+            if f.record.get("CF") == "1" and not self._incomplete_inside(folder):
+                f.record.set("CF", "2")
+            folder = f.parent
 
     def move_symbol(self, ref: str | int, folder: str | int) -> None:
         """Move a logic symbol or folder into another folder (to the end of it)."""
@@ -565,6 +592,8 @@ class Editor:
             s.record.set("PrH", str(target))
             self._reload()
             self._append_child(target, s.handle)
+            self._reload()
+            self._clear_folder_flags(old)
         except Exception:
             self._restore(snapshot)
             raise

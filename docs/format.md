@@ -252,6 +252,13 @@ How SIMPL 4.3x stores a placed module, measured on every placed module with its 
   - **`Plb` is optional:** 4.3 saves have both forms (19 placed modules without, 2 with it on every list parameter, defaults included). SIMPL 4.32 re-saved a module placed **without** `Plb` byte for byte, and one **with** `Plb` byte for byte, and compiled both with 0 errors. So SIMPL neither adds nor drops it. `add_module` writes it, which is the form that shows the label in SIMPL.
   - **Stale labels:** a label can be out of date when the module was recompiled after placing (Date v1.0's `Plb10`). SIMPL keeps the old label.
   - **Macros** (`.umc`/`.cmc`) have `Dp` records with options too, but their `H` doesn't map to `P<n>` the same way (a File Reader's `P3` holds a file name against a list of file types). They're placed as before, with the value only and no label.
+  - **Changed modules (2026-11-25):** the placed record stores no pin names, only positions. On load SIMPL 4.32 never renumbers or rewires it. Tested with a module wired on every pin, one change per program:
+    - **Unchanged (just recompiled):** compiles as before.
+    - **Pin added (inserted or appended), or a pin's type changed:** "Problems Loading Program", then "Incomplete Symbols" with no compile. A save writes `CF=1` on the module and on every folder above it, and changes nothing else.
+    - **Pin removed:** compiles with notice 202, "Number of inputs on symbol [... : S-1 : X.usp] needed adjustment". The list is cut from its end: the removed pin's signal stays on its position (now the next pin) and the last signal of that list is dropped. A save writes nothing new.
+    - **Swapped or renamed:** compiles with no message; the save is byte-identical.
+  - **Re-placing:** `remove_symbol` + `add_module` (wired by name) in one edit compiled as predicted and re-saved byte for byte, both from the incomplete state (insert) and the silent one (swap).
+    - **Folder marks:** SIMPL clears a folder's `CF=1` once nothing incomplete is left inside it. No corpus folder (0 of 7,547) is marked without an incomplete symbol inside it, and 18 of 18 marked folders have one.
   - **Backslashes in string values:** the test module's list value `\user\` drew SIMPL warning LGCMCVT236 ("Illegal unicode constant") and notice LGCMCVT107, because SIMPL reads `\u` in a parameter string as an escape. That comes from the module's text, not from placing it.
 
 ### F12 round 4: automatic compiling (2026-11-24)
