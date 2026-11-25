@@ -70,7 +70,8 @@ Edit only through apply_edits; never edit .smw files by hand or with other tools
 - Symbols are '#<handle>'. Every result has a 'revision'; SIMPL can renumber handles when it
   saves, so re-read after the user saves and never reuse old handles.
 - Edits: plan in one line, then ONE apply_edits call with a summary and the revision you read.
-  If SIMPL has the file open, ask the user to save there first (user_confirmed_saved=true).
+  If SIMPL has the file open: simpl_save if it was opened with simpl_open, else ask the user
+  to save there first (user_confirmed_saved=true).
   Do only what was asked. Afterwards follow its next_step (Yes to SIMPL's reload, then F12), or,
   if SIMPL is closed, check it yourself with compile_program.
   undo_last_edit / restore_version / edit_history manage history.
