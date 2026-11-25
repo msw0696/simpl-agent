@@ -954,14 +954,23 @@ class Tools(EditTools):
         def rows(items):
             return [{"pin": f"{n}", "name": nm, "type": t} for n, nm, t in items if nm != an.UNUSED_PIN]
 
-        params = [{"pin": f"P{n}", "name": nm, "type": t} for n, nm, t in lay["parameters"]
-                  if nm not in (an.UNUSED_PIN, an.REFERENCE_NAME)]
+        lists = an.splus_parameter_lists(p, module.strip()) if code == an.SPLUS_CODE else {}
+        params = []
+        for n, nm, t in lay["parameters"]:
+            if nm in (an.UNUSED_PIN, an.REFERENCE_NAME):
+                continue
+            row: dict[str, Any] = {"pin": f"P{n}", "name": nm, "type": t}
+            if n in lists:
+                row["options"] = [{"value": v, "label": lbl} for v, lbl in lists[n]["options"]]
+                row["default"] = lists[n]["default"]
+            params.append(row)
         return {
             "module": module, "kind": "macro" if code == an.MACRO_CODE else "SIMPL+",
             "name": d.name, "inputs": rows(lay["inputs"]), "outputs": rows(lay["outputs"]),
             "parameters_required": params,
             "note": "Wire pins by these names in apply_edits add_module 'connect'. Unlisted pins stay "
-                    "unconnected. Every listed parameter needs a value.",
+                    "unconnected. Every listed parameter needs a value; a drop-down ('options') takes one "
+                    "of its values or labels (ask the user which; 'default' is the module's own).",
         }
 
     def find_problems(self, path: str, limit: int = 200) -> dict[str, Any]:

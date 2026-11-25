@@ -146,7 +146,7 @@ These are built into the tools and the skill:
 ### Modules and automatic compiling ✅
 
 - **`add_module`** places macros and SIMPL+ modules, wired by pin name. The record rules were measured on 631 placed modules in the corpus. A macro and a SIMPL+ module placed in the classroom program compiled with exactly the predicted messages.
-  - Not yet: SIMPL+ modules with drop-down parameters.
+  - SIMPL+ drop-down parameters take a listed value or its label (since 2026-11-25; see [M6](#m6-simpl--2026-11-25)).
 - **`compile_program`** compiles in SIMPL Windows with no clicking and reports SIMPL's errors, warnings, notices and any dialogs it showed. Since 2026-11-24 it opens SIMPL without admin rights and drives it by menu commands, so it works even with the screen locked and needs no elevated task. It answers only routine dialogs (load notices, commented-out symbols) and always answers No to "Transfer Program?". If SIMPL is already open as administrator it falls back to [smpc](https://github.com/Norgate-AV/smpc) (MIT) through a one-time elevated scheduled task; see [Setup](#setup).
 - SIMPL+ and SIMPL# need Microsoft **.NET Compact Framework 3.5** installed, or SIMPL gives error LGCMCVT277.
 
@@ -176,7 +176,8 @@ These are built into the tools and the skill:
   - **It converts the file to CRLF first.** SPlusCC drops everything after a `//` comment in a file with LF line endings, then reports a clean compile of an empty module. 71 of the 76 public modules checked for this needed the fix.
 - **Proof:** a feedback-parser module written for the conference-room program compiled with SPlusCC, was placed on COM 1's `rx$`, and compiled in SIMPL with 0 errors, warnings and notices. A fresh SIMPL re-saved the program byte for byte. All 156 public `.usp` files compiled in scratch copies: 113 compile, the failures I checked are SIMPL# libraries missing from their repos, and the parser accounts for every message SPlusCC counts.
 - **SIMPL keeps the module build it read first,** even after reloading the program. `compile_program` saves and restarts a SIMPL started with `simpl_open` if any of the program's `.ush` files is newer than that SIMPL. `simpl_open` waits until SIMPL has loaded the program, which took 68 s here.
-- **Not yet:** placing modules with parameter drop-down lists; checking what SIMPL does when a placed module's pins change.
+- **Drop-down parameters** (`propList`): `module_details` lists each one's options and default. `add_module` takes a listed value or its label and refuses anything else, as SIMPL's drop-down does. It stores the value and SIMPL's label (`Plb`). SIMPL 4.32 compiled a module placed this way with 0 errors, and re-saved it byte for byte. SIMPL also keeps one placed without the label, so older programs are fine either way.
+- **Not yet:** checking what SIMPL does when a placed module's pins change.
 
 ### Later
 

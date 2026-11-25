@@ -177,22 +177,40 @@ def module_layout(code: int, d: LibSymbol) -> dict:
         return out
 
     pc = d.cues("ParamCue")
-    params = [(n, pc.get(n, f"p{n}"), f.get(f"ParamSigType{n}") or "") for n in range(1, npar + 1)]
+    params = []
+    for n in range(1, npar + 1):
+        name, t = pc.get(n, f"p{n}"), f.get(f"ParamSigType{n}") or ""
+        if code == SPLUS_CODE and t.lower() == "list":
+            name = name.split(",", 1)[0]  # SPlusCC writes a drop-down's cue as 'Mode,0d,1d,2d'
+        params.append((n, name, t))
     return {"n1I": n1i, "n2I": n2i, "n1O": n1o, "n2O": n2o,
             "inputs": pins("I", n1i, n2i), "outputs": pins("O", n1o, n2o), "parameters": params}
 
 
-def module_has_parameter_lists(path: Path | None, symbol_name: str) -> bool:
-    """True for a SIMPL+ module whose header has parameter drop-down labels ('Lbl'):
-    SIMPL then stores the chosen label (Plb) too, which isn't proven yet."""
+@lru_cache(maxsize=64)
+def _splus_lists_cached(path: str, mtime: float) -> dict[int, dict]:
+    out: dict[int, dict] = {}
+    for r in parse_tio(Path(path).read_bytes().decode("latin-1")):
+        h, vn = r.get("H", ""), r.get("VN", "")
+        if r.get("ObjTp") != "Dp" or not h.isdigit() or not vn.isdigit() or int(vn) == 0:
+            continue
+        opts = [(r.get(f"Val{i}", ""), r.get(f"Lbl{i}", "")) for i in range(1, int(vn) + 1)]
+        out[int(h)] = {"default": r.get("DV"), "options": opts}
+    return out
+
+
+def splus_parameter_lists(path: Path | None, symbol_name: str) -> dict[int, dict]:
+    """A SIMPL+ module's drop-down parameters, from the Dp records of its .ush beside the program:
+    {parameter n: {"default": value, "options": [(value, label), ...]}}. Dp H=n is parameter n
+    (37 of 37 placed SIMPL+ list parameters in the corpus). When one is picked, SIMPL stores the
+    value in P<n> and its label in Plb<n>. Macros (.umc/.cmc) number theirs differently; not used."""
     if path is None or not symbol_name.lower().endswith(".usp"):
-        return False
+        return {}
     ush = path.parent / (symbol_name[:-4] + ".ush")
     try:
-        text = ush.read_bytes().decode("latin-1")
+        return _splus_lists_cached(str(ush), ush.stat().st_mtime)
     except OSError:
-        return False
-    return re.search(r"^\s*Lbl\d*=", text, re.M) is not None
+        return {}
 
 
 @lru_cache(maxsize=256)

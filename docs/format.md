@@ -246,7 +246,13 @@ How SIMPL 4.3x stores a placed module, measured on every placed module with its 
   Unused required pins carry SIMPL's placeholders `//__digital_reserved__`, `//__analog_reserved__` and `//__serial_reserved__` (one each, shared). **A module with an unwired required pin stops the compile** ("Incomplete Symbols"; seen in round 4).
 - **Parameters:** placeholder slots (`[~UNUSED~]`, `[Reference Name]`) are always empty, and real parameters are always set (2,151 against 1).
 - **Pin groups:** modules whose pins are grouped (`[~BeginGroup~]`) get per-pin `GrpStI`/`GrpStO` when SIMPL saves them (13 of 13). This is display state: a Philips Hue Bridge placed without it compiled with 0 errors.
-- **Drop-down parameters:** SIMPL+ modules with drop-down parameters (`Lbl` in the `.ush`) get `Plb` labels. Not supported yet.
+- **Drop-down parameters (SIMPL+, checked 2026-11-25):**
+  - **Where the options live:** `propList` compiles to a `Dp` record per parameter in the `.ush`: `H=n` is parameter n (`H=1` is the Reference Name), `DV` is the default, and `VN`, `Val<i>` and `Lbl<i>` are the options. This holds for 37 of 37 placed list parameters in the corpus. The parameter's cue carries its values (`ParamCue2=Mode,0d,1d,2d`, `ParamSigType2=List`), so the name is the part before the first comma.
+  - **What SIMPL stores:** `P<n>` holds the option's value. `Plb<n>`, right after it, holds its label (14 of 14).
+  - **`Plb` is optional:** 4.3 saves have both forms (19 placed modules without, 2 with it on every list parameter, defaults included). SIMPL 4.32 re-saved a module placed **without** `Plb` byte for byte, and one **with** `Plb` byte for byte, and compiled both with 0 errors. So SIMPL neither adds nor drops it. `add_module` writes it, which is the form that shows the label in SIMPL.
+  - **Stale labels:** a label can be out of date when the module was recompiled after placing (Date v1.0's `Plb10`). SIMPL keeps the old label.
+  - **Macros** (`.umc`/`.cmc`) have `Dp` records with options too, but their `H` doesn't map to `P<n>` the same way (a File Reader's `P3` holds a file name against a list of file types). They're placed as before, with the value only and no label.
+  - **Backslashes in string values:** the test module's list value `\user\` drew SIMPL warning LGCMCVT236 ("Illegal unicode constant") and notice LGCMCVT107, because SIMPL reads `\u` in a parameter string as an escape. That comes from the module's text, not from placing it.
 
 ### F12 round 4: automatic compiling (2026-11-24)
 Compiles now run unattended. `smpc` v0.2.0 (MIT, Norgate-AV/smpc; checksum verified; source reviewed: no network, no registry, only closes the SIMPL it starts) runs from an elevated scheduled task, `\SIMPL Agent\Compile`, installed once under `C:\Program Files\SimplAgent`. The task only compiles a `.smw` under the allowed folders. `compile_program` uses it. A compile takes about 40 to 70 s.

@@ -175,25 +175,39 @@ def test_add_module_refusals(tmp_path: Path) -> None:
     assert ed.raw.to_bytes() == before
 
 
-def test_parameter_dropdowns_refused(tmp_path: Path) -> None:
+def test_parameter_dropdown(tmp_path: Path) -> None:
+    """A drop-down parameter takes a listed value or its label; SIMPL's Plb label follows P<n>
+    (live-checked: SIMPL 4.32 re-saved and compiled a module placed this way, 2026-11-25)."""
     import pytest
 
+    from simpl_agent import analysis as an
     from simpl_agent.smw.edit import EditError
 
     ed, p = module_editor(tmp_path)
-    (tmp_path / "fake_timer.ush").write_bytes((USH_FULL + "[BEGIN]\r\n  ObjTp=Dp\r\n  Lbl1=Off\r\n[END]\r\n").encode("latin-1"))
-    with pytest.raises(EditError, match="drop-down"):
-        ed.add_module("fake_timer.usp", "Logic", parameters=["1d"])
+    ush = USH_FULL.replace("  ParamCue2=Timeout\r\n", "  ParamCue2=Timeout,0d,1d\r\n  ParamSigType2=List\r\n")
+    ush += ("[BEGIN]\r\n  ObjTp=Dp\r\n  H=2\r\n  Tp=1\r\n  DV=0d\r\n  VVS=2\r\n  VN=2\r\n  Val1=0d\r\n"
+            "  Lbl1=Off\r\n  Val2=1d\r\n  Lbl2=Long wait\r\n[END]\r\n")
+    (tmp_path / "fake_timer.ush").write_bytes(ush.encode("latin-1"))
+    assert an.splus_parameter_lists(p, "fake_timer.usp") == {
+        2: {"default": "0d", "options": [("0d", "Off"), ("1d", "Long wait")]}}
+    _, _, lay = ed.module_definition("fake_timer.usp")
+    assert lay["parameters"][1][1:] == ("Timeout", "List")  # the values are cut from the name
+    for given in ("long WAIT", "1d"):
+        h = ed.add_module("fake_timer.usp", "Logic", parameters={"Timeout": given})
+        lines = ed.prog.symbols[h].record.lines
+        assert lines[-3:] == [("P1", ""), ("P2", "1d"), ("Plb2", "Long wait")]
+    with pytest.raises(EditError, match=r"drop-down.*0d \(Off\), 1d \(Long wait\)"):
+        ed.add_module("fake_timer.usp", "Logic", parameters=["5d"])
 
 
 # ---------------------------------------------------------------- proof against SIMPL's own files
-SPECIAL = ("GrpSt", "Plb", "Pin")
+SPECIAL = ("GrpSt", "Pin")
 
 
 @__import__("pytest").mark.corpus
 def test_placed_modules_rebuild_exactly() -> None:
     """Every module SIMPL 4.3x placed in the corpus rebuilds byte-for-byte from its definition
-    (window-state keys aside); special cases (group state, drop-down labels) are counted, not built."""
+    (window-state keys aside); drop-down labels (Plb) come from the record; group state is counted, not built."""
     import pytest
 
     from simpl_agent.corpus import GITHUB_CORPUS, INSTALLED_MODULES, iter_files
@@ -229,6 +243,7 @@ def test_placed_modules_rebuild_exactly() -> None:
             gen = module_lines(handle=s.handle, code=s.code, name=s.name, objver=d.fields.get("ObjVer") or "1",
                                parent=s.parent, n1i=n1i, n2i=n2i, n1o=n1o, n2o=n2o, inputs=s.inputs,
                                outputs=s.outputs, params=[s.params.get(n, "") for n in range(1, npar + 1)],
+                               param_labels={int(k[3:]): v for k, v in r.lines if k and k.startswith("Plb")},
                                comment=[v for k, v in r.lines if k and k.startswith("Cmn")])
             checked += 1
             if gen != [kv for kv in r.lines if kv[0] not in ui] or r.get("CF") != "2":

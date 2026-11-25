@@ -597,8 +597,6 @@ class Editor:
         if code == an.SPLUS_CODE:
             if self.program_path is None or not (self.program_path.parent / name).exists():
                 raise EditError(f"{name} must be next to the program so SIMPL can compile it")
-            if an.module_has_parameter_lists(self.program_path, name):
-                raise EditError(f"{name} has drop-down parameters; adding those isn't proven yet")
         # Modules with pin groups ([~BeginGroup~]) get per-pin group state (GrpStI/GrpStO) when SIMPL
         # saves them. It's display state: a Philips Hue Bridge placed without it compiled with 0 errors
         # in SIMPL 4.32 (F12 round 4, 2026-11-24), so these are allowed.
@@ -675,6 +673,25 @@ class Editor:
             raise EditError(f"{module}: give a value for every parameter; missing {missing}")
         if any(c in v for v in values.values() for c in "\r\n"):
             raise EditError("parameter values must be one line")
+        # Drop-down parameters (SIMPL+ propList): only listed values, as SIMPL's drop-down allows. The
+        # label may be given instead. SIMPL stores the label too (Plb<n>, after P<n>); SIMPL 4.32 keeps
+        # a record with or without it byte for byte, and shows the label.
+        labels: dict[int, str] = {}
+        if code == an.SPLUS_CODE:
+            names = {n: nm for n, nm, _ in lay["parameters"]}
+            for n, spec in an.splus_parameter_lists(self.program_path, str(module).strip()).items():
+                if n not in values or values[n] == "":
+                    continue
+                v, opts = values[n], spec["options"]
+                hit = (next((o for o in opts if o[0] == v), None)
+                       or next((o for o in opts if o[1].lower() == v.lower()), None)
+                       or next((o for o in opts if o[0].lower() == v.lower()), None))
+                if hit is None:
+                    shown = ", ".join(f"{val} ({lbl})" for val, lbl in opts)
+                    raise EditError(f"{module}: parameter {names.get(n, n)!r} is a drop-down; give one of {shown}")
+                values[n] = hit[0]
+                if hit[1]:
+                    labels[n] = hit[1]
 
         # SIMPL requires every pin with a plain name (9,963 of 9,963 wired in the corpus);
         # [bracketed] pins are optional. Unused required pins get SIMPL's standard placeholder
@@ -729,6 +746,7 @@ class Editor:
                 handle=h, code=code, name=str(module).strip(), objver=d.fields.get("ObjVer") or "1",
                 parent=parent, n1i=lay["n1I"], n2i=lay["n2I"], n1o=lay["n1O"], n2o=lay["n2O"],
                 inputs=ins, outputs=outs, params=[values[n] for n, _, _ in lay["parameters"]], comment=comment,
+                param_labels=labels,
             )
             self._insert_record(Record(lines=lines), "Sm", after_types=("Bw", "Bk"))
             self._append_child(parent, h)
@@ -816,8 +834,10 @@ def module_lines(
     outputs: dict[int, int],
     params: list[str],
     comment: str | list[str] | None,
+    param_labels: dict[int, str] | None = None,
 ) -> list[tuple[str | None, str]]:
     """The record SIMPL 4.3x writes for a placed macro (155) or SIMPL+ module (103).
+    ``param_labels`` are drop-down labels (Plb<n>, right after P<n>).
 
     No SmVr. Count keys of zero are left out; SIMPL+ never stores n2O (its list-2
     outputs still count in mO/tO). Pins are sparse. Proven by rebuilding placed
@@ -840,7 +860,10 @@ def module_lines(
         lines += [(f"O{n}", str(h)) for n, h in sorted(outputs.items())]
     if params:
         lines.append(("mP", str(len(params))))
-        lines += [(f"P{i}", v) for i, v in enumerate(params, 1)]
+        for i, v in enumerate(params, 1):
+            lines.append((f"P{i}", v))
+            if param_labels and i in param_labels:
+                lines.append((f"Plb{i}", param_labels[i]))
     return lines
 
 

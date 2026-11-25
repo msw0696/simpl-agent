@@ -33,7 +33,8 @@ Tools for Crestron SIMPL Windows. They read, check and **edit** programs. Every 
    - **Which symbols:** only simple logic symbols proven in SIMPL 4.3x files can be added (`add_symbol_supported`), and only to files saved by SIMPL 4.3x.
    - **Modules (`add_module`):** wire pins by name in `connect`. SIMPL requires every pin with a plain name; ones you don't connect go on SIMPL's standard placeholders (`//__digital_reserved__` and so on), and the result says how many. `[bracketed]` pins are optional. Every listed parameter needs a value.
      - **Pins that take any type** must be connected explicitly.
-     - **SIMPL+ modules** need their compiled `.ush` beside the program; modules with drop-down parameters aren't supported yet.
+     - **SIMPL+ modules** need their compiled `.ush` beside the program.
+     - **Drop-down parameters:** `module_details` lists their `options` (value and label) and the module's `default`. Ask the user which option to use, then give either its value or its label; anything else is refused.
    - **Device parameters and pins:** `add_device` also takes `parameters` ({name: value} or a list) and `connect` ({pin name: signal}). If it says a parameter has no default (e.g. a TCP/IP Client's Port), ask the user for the value. COM drivers go on a COM card's port: `network` = the card's '#handle', `address` = the port number.
    - **Panel and EISC joins (`wire_joins`):** `{symbol: '#h', joins: [{type: 'digital', join: 10, in: 'Power_On_Fb', out: 'Power_On_Press'}, ...]}`. `in` is the signal into the device (a panel's feedback), `out` the signal it drives (a press). Join lists grow as needed. Use the panel's symbol handle (`device_tree` shows it).
    - **SIMPL+:** see [Writing SIMPL+ modules](#writing-simpl-modules).
@@ -55,7 +56,7 @@ Tools for Crestron SIMPL Windows. They read, check and **edit** programs. Every 
    - Names can't be reserved words (e.g. `ON`): the compiler says "'ON' already defined" (1000).
    - Declare string sizes (`STRING reply[200];`), and initialise globals in `Main`.
    - Read inputs only after `WaitForInitializationComplete()` in `Main`.
-   - Don't give it parameter drop-down lists (`#BEGIN_PARAMETER_PROPERTIES` with `propList`) yet: `add_module` can't place those.
+   - **Drop-down parameters:** use `#BEGIN_PARAMETER_PROPERTIES` with `propList` (look it up first). Avoid backslashes in string values: SIMPL reads `\u` and similar as escapes and warns.
 4. **`splus_compile {path, targets}`** (`series4` for 4-Series, add `series3` for 3-Series programs) until it's clean. Each error comes with the help's explanation; line numbers are the compiler's own count. It fixes LF line endings first (SPlusCC silently drops everything after a `//` comment without CRLF), and its `module` field shows the pins SIMPL will show: check they're what you meant.
 5. **Place it** with `module_details` then `apply_edits add_module` (wire pins by name), then **`compile_program`**. A SIMPL that was already open keeps the module build it loaded first; `compile_program` saves and restarts one started by `simpl_open`, but ask the user to reopen an admin SIMPL.
 6. **Changing a placed module's pins** hasn't been checked against SIMPL yet: tell the user, and have them check the module in SIMPL.
