@@ -283,22 +283,37 @@ class Editor:
         self._reload()
 
     @staticmethod
-    def pin_types(ls: LibSymbol | None, letter: str, n: int) -> list[str]:
+    def pin_types(ls: LibSymbol | None, letter: str, n: int, record: Record | None = None) -> list[str]:
         """The signal types a library symbol's pin takes, from its Input/OutputSigType<n>;
-        [] when the library doesn't say (then it's usually digital, but not always)."""
+        [] when the library doesn't say (then it's usually digital, but not always).
+
+        Trusted only where the numbering is the library's: logic symbols with one pin list, and
+        device symbols whose placed ``record`` uses list 1 only, for pins within it. Elsewhere it
+        isn't (a DIN-1DIM4's pin 1 is analog though InputSigType1 says Digital: 50 such pins in
+        the corpus). Checked on 380 corpus programs: 13,514 logic pins and 1,239 device pins
+        (COM drivers included) all match, 0 mismatches.
+        """
         if ls is None:
             return []
+        f = ls.fields
+        if any("List2" in k or "List3" in k for k in f):
+            return []
+        if f.get("DeviceCode", "0") not in ("", "0"):
+            n1 = record.get("n1I" if letter == "I" else "n1O") if record is not None else None
+            if (record is None or any(k in record for k in ("n2I", "n2O", "n3I", "n3O"))
+                    or not n1 or not n1.isdigit() or n > int(n1)):
+                return []
         t = (ls.fields.get(f"{'Input' if letter == 'I' else 'Output'}SigType{n}") or "").lower()
         if "any" in t:
             return []
         return [k for k in ("digital", "analog", "serial") if k in t or (k == "serial" and "string" in t)]
 
     def _typed_signal(self, ref: str | int | None, ls: LibSymbol | None, letter: str, n: int,
-                      default_type: str) -> int | None:
+                      default_type: str, record: Record | None = None) -> int | None:
         """A pin's signal: new signals get the pin's own type when it has exactly one (a Serial
         Send's out$ is serial), else ``default_type``. An existing signal of the wrong type is
         refused, as SIMPL won't connect it."""
-        types = self.pin_types(ls, letter, n)
+        types = self.pin_types(ls, letter, n, record)
         h = self.signal_for(ref, create_type=types[0] if len(types) == 1 else default_type)
         if h is None or not types or h in set(self.prog.builtin_signals.values()):
             return h
@@ -406,7 +421,8 @@ class Editor:
                 self._reload()
                 self.log.add(f"disconnected #{s.handle} {letter}{n}")
                 return
-            sig = self._typed_signal(signal, self.lib.get(s.code) if self.lib else None, letter, n, new_signal_type)
+            sig = self._typed_signal(signal, self.lib.get(s.code) if self.lib else None, letter, n, new_signal_type,
+                                     record=s.record)
             if letter == "O" and s.outputs.get(n) != sig:
                 self.check_can_drive(sig, self.lib.get(s.code) if self.lib else None)
             self._set_pin_key(s.record, letter, n, str(sig))

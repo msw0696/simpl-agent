@@ -41,3 +41,35 @@ def test_device_rules_hold_in_every_public_program() -> None:
         if ps:
             bad.append((f.name, sorted(ps)[:2]))
     assert not bad, bad[:5]
+
+@pytest.mark.corpus
+@pytest.mark.skipif(not GITHUB_CORPUS.is_dir(), reason="no corpus")
+def test_pin_types_match_every_public_program() -> None:
+    # add_symbol/connect type new signals and refuse wrong-typed ones from Editor.pin_types,
+    # so it must agree with every wired pin SIMPL saved (13,514 logic + 1,239 device pins).
+    from simpl_agent.catalog.symlib import DEFAULT_SYMLIB, load_symlib
+    from simpl_agent.smw.edit import Editor
+
+    if not DEFAULT_SYMLIB.exists():
+        pytest.skip("SIMPL isn't installed")
+    lib = load_symlib()
+    checked, bad = 0, []
+    for f in iter_files(GITHUB_CORPUS, exts={".smw"}):
+        try:
+            prog = load(rawfile.read(f))
+        except Exception:
+            continue
+        builtin = set(prog.builtin_signals.values())
+        for s in prog.symbols.values():
+            ls = lib.get(s.code)
+            for letter, pins in (("I", s.inputs), ("O", s.outputs)):
+                for n, h in pins.items():
+                    sg = prog.signals.get(h)
+                    if sg is None or h in builtin or sg.name.startswith("//"):
+                        continue
+                    types = Editor.pin_types(ls, letter, n, s.record)
+                    if types:
+                        checked += 1
+                        if sg.type not in types:
+                            bad.append((f.name, s.code, f"{letter}{n}", sg.name, sg.type, types))
+    assert checked > 10000 and not bad, bad[:5]

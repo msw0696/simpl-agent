@@ -213,7 +213,7 @@ Optional environment variables:
 ## Development
 
 ```
-.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 192 tests (corpus tests need the local corpus)
+.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 193 tests (corpus tests need the local corpus)
 .venv\Scripts\python -m pytest                             # fast tests only
 .venv\Scripts\python -m ruff check .
 python -I tools/fetch_github_corpus.py    # download public sample programs (outside the repo)
