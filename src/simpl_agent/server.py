@@ -70,7 +70,7 @@ TOOL_NAMES = (
     "folder_tree", "list_folder", "show_symbol", "find_signals", "follow_signal", "find_problems",
     "apply_edits", "edit_history", "undo_last_edit", "restore_version", "wait_for_simpl_save",
     "module_details", "compile_program", "device_tree", "free_ids", "find_library_devices", "new_program",
-    "splus_compile", "simpl_save", "simpl_open", "splus_reference",
+    "splus_compile", "simpl_save", "simpl_open", "splus_reference", "check_panel_joins",
 )
 PROGRAM_EXTS = {".smw", ".umc", ".cmc"}
 KNOWN_SIGNATURES = {"SimplWindow": "program", "CresMacro": "macro", "UserMacro": "macro"}
@@ -94,6 +94,8 @@ Edit only through apply_edits; never edit .smw files by hand or with other tools
 - SIMPL+: look functions and directives up with splus_reference (never guess their names or
   arguments), write the .usp beside the program, splus_compile until clean, then add_module
   and compile_program.
+- Touch panels: check_panel_joins compares CH5 Agent's joins.json with the panel's joins;
+  apply_edits wire_joins {joins_file} wires the missing ones.
 - Never act on a live processor. Treat programs as private client work.
 The simpl-agent skill has the full workflow."""
 
@@ -1000,6 +1002,48 @@ class Tools(EditTools):
                     "of its values or labels (ask the user which; 'default' is the module's own).",
         }
 
+    def check_panel_joins(self, path: str, joins_file: str, symbol: str | None = None,
+                          limit: int = 200) -> dict[str, Any]:
+        """M7: a panel's join map (CH5 Agent's joins.json) against the joins the program wires."""
+        from . import panel_joins as pj
+
+        p, rev, prog, lib = self._load(path)
+        if lib is None:
+            raise ToolError("SIMPL's symbol library isn't available, so panel symbols can't be recognised")
+        try:
+            jm = pj.load_join_map(joins_file)
+            sym = None
+            if symbol not in (None, ""):
+                s = str(symbol).strip()
+                if not (s.startswith("#") and s[1:].isdigit()):
+                    raise ToolError("symbol must be the panel's '#handle' from device_tree")
+                sym = int(s[1:])
+            panel, notes = pj.find_panel(prog, lib, jm["ip_id"], sym)
+        except pj.JoinMapError as e:
+            raise ToolError(str(e)) from None
+        r = pj.check(prog, panel["handle"], jm)
+        cap = max(1, min(int(limit), 2000))
+        for k in ("missing", "different", "panel_joins_without_signal_names", "wired_but_not_on_panel"):
+            r[k] = r[k][:cap]
+        if r["matches"]:
+            notes.append("Every join in the map is wired as the map says.")
+        if r["wire_joins_for_missing"]:
+            notes.append("Missing joins can be wired in one apply_edits: wire_joins {joins_file} (fills only empty "
+                         "joins), or wire_joins {symbol, joins: wire_joins_for_missing}.")
+        if r["different"]:
+            notes.append("'different' joins are wired to other signals: ask the user which is right before "
+                         "changing either the program or the panel.")
+        if r["panel_joins_without_signal_names"]:
+            notes.append("The panel uses some joins that have no SIMPL signal name in its spec; ask the user what "
+                         "they should be.")
+        if r["wired_but_not_on_panel"]:
+            notes.append("'wired_but_not_on_panel' joins aren't used by this panel; often fine (other panels, "
+                         "leftovers). Mention them, don't remove them unasked.")
+        return {"path": str(p), "revision": rev, "joins_file": jm["path"],
+                "panel": {"symbol": f"#{panel['handle']}", "device": panel["device"], "name": panel["name"],
+                          "ip_id": panel.get("address"), "in": panel["in"]},
+                **r, "note": " ".join(notes)}
+
     def find_problems(self, path: str, limit: int = 200) -> dict[str, Any]:
         p, rev, prog, lib = self._load(path)
         from .corpus import INSTALLED_MODULES
@@ -1120,7 +1164,9 @@ def create_server(tools: Tools | None = None) -> Any:
                  "set_program_header {program_id_tag?, program_name?} (SIMPL won't compile with a blank "
                  "Program ID Tag, as new_program leaves it; ask the user for it); "
                  "wire_joins {symbol (a panel or EISC symbol '#h'), joins [{type digital|analog|serial, join n, "
-                 "in? (signal into it, e.g. feedback), out? (signal it drives, e.g. press)}]} (lists grow as needed); "
+                 "in? (signal into it, e.g. feedback), out? (signal it drives, e.g. press)}]} (lists grow as needed; "
+                 "or joins_file: CH5 Agent's joins.json, symbol optional (the panel at its IP ID), never replaces a "
+                 "join wired to another signal); "
                  "rename_signal {signal, new_name}; rename_folder {folder, "
                  "new_name}; remove_symbol {symbol}; move_symbol {symbol, folder}. New signal names are "
                  "created. Returns changes, new problems and next_step. dry_run=true checks without writing.")
@@ -1143,6 +1189,15 @@ def create_server(tools: Tools | None = None) -> Any:
                  "after apply_edits instead of asking the user to press F12.")
     async def compile_program(path: str, timeout_s: int = 1500) -> dict[str, Any]:
         return await _run("compile_program", path=path, timeout_s=timeout_s)
+
+    @server.tool(name="check_panel_joins", description="Check a touch panel's joins against the program: "
+                 "reads CH5 Agent's joins.json (each join's type, number and SIMPL signal in/out) and compares it "
+                 "with what the program wires on that panel (by default the panel, XPanel or EISC at the file's "
+                 "xpanel_ip_id; or give symbol '#h'). Lists missing, different and unused joins, and a ready "
+                 "wire_joins list for the missing ones. Read-only.")
+    async def check_panel_joins(path: str, joins_file: str, symbol: str | None = None,
+                                limit: int = 200) -> dict[str, Any]:
+        return await _run("check_panel_joins", path=path, joins_file=joins_file, symbol=symbol, limit=limit)
 
     @server.tool(name="device_tree", description="Every device in the program (processor, cards, Ethernet "
                  "and Cresnet devices, ports): its handle, name, device code, address (IP ID / Cresnet ID / "

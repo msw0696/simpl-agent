@@ -22,7 +22,7 @@ SIMPL Windows programs are large, flat graphs of symbols and signals. They're sa
 
 ## Tools
 
-25 tools. Every call is logged to `%LOCALAPPDATA%\SimplAgent\audit.jsonl`.
+26 tools. Every call is logged to `%LOCALAPPDATA%\SimplAgent\audit.jsonl`.
 
 | Group | Tool | What it does |
 |---|---|---|
@@ -49,6 +49,7 @@ SIMPL Windows programs are large, flat graphs of symbols and signals. They're sa
 | | `simpl_open` | Open a program in SIMPL without admin rights, so SIMPL Agent can save and reload it there |
 | | `simpl_save` | Save the program in SIMPL; edits then go ahead without asking, and SIMPL reloads them automatically |
 | Compile | `compile_program` | Compile in SIMPL Windows unattended and compare SIMPL's messages with `find_problems` |
+| Panels | `check_panel_joins` | Check a touch panel's joins (CH5 Agent's `joins.json`) against what the program wires on that panel: missing, different and unused joins, and a ready fix for the missing ones |
 | SIMPL+ | `splus_reference` | Look up functions, declarations, directives, events and compiler errors in Crestron's SIMPL+ Language Reference (installed with SIMPL) |
 | | `splus_compile` | Compile a SIMPL+ module with Crestron's own SPlusCC (no window, no admin): errors and warnings per target with the help's explanation, and the pins SIMPL will show |
 
@@ -56,7 +57,7 @@ SIMPL Windows programs are large, flat graphs of symbols and signals. They're sa
 - **Folders and logic:** `add_folder`, `add_symbol` (126 simple logic symbols proven in SIMPL 4.3x files), `move_symbol`, `remove_symbol`.
 - **Wiring and settings:** `connect` (or disconnect), `set_parameter`, `set_comment`, `rename_signal`, `rename_folder`. New signals are created when a pin names them.
 - **Modules:** `add_module` places a macro or SIMPL+ module, wired by pin name. Unused required pins go on SIMPL's `//__…_reserved__` placeholders.
-- **Devices:** `add_device` places a device at an IP ID or Cresnet ID the user chooses, or a card in a frame's slot; `remove_device` removes one with everything inside it; `wire_joins` connects a panel's or EISC's digital, analog and serial joins by number, growing its join lists as needed (see [M4](#m4-devices--2026-11-24)).
+- **Devices:** `add_device` places a device at an IP ID or Cresnet ID the user chooses, or a card in a frame's slot; `remove_device` removes one with everything inside it; `wire_joins` connects a panel's or EISC's digital, analog and serial joins by number, growing its join lists as needed (see [M4](#m4-devices--2026-11-24)). With `joins_file` it wires straight from CH5 Agent's `joins.json` and never replaces a join wired to another signal (see [M7](#m7-touch-panels--2026-11-25)).
 - **New programs:** `new_program` (a tool of its own) writes an empty program for a processor exactly as SIMPL's File > New does. SIMPL won't compile a program with a blank Program ID Tag, which File > New leaves blank; the `set_program_header` edit sets it (and the Program Name).
 - **Signal types:** a new signal takes its pin's type from the library (a Serial Send's `out$` gets a serial signal), and a signal of the wrong type is refused.
 
@@ -109,7 +110,7 @@ These are built into the tools and the skill:
 | **M4** Devices | Device tree, free IDs, adding and removing devices, frames, cards, drivers, panel joins | ✅ Matches SIMPL 4.32's own saves |
 | **M5** New programs | Start a program from scratch | ✅ `new_program`: 13 processors proven identical to SIMPL's File > New (CP3, CP3N, CP4, CP4N, PRO3, PRO4, AV4, MC3, MC4, RMC3, RMC4, DIN-AP4, MPC3-302) |
 | **M6** SIMPL+ | Write, compile and place SIMPL+ modules | ✅ Checked in SIMPL 4.32: drop-downs, changed pins; `splus_reference`, `splus_compile` |
-| **M7** Touch panels | Check joins between program and panel | Later |
+| **M7** Touch panels | Check joins between program and panel | 🔨 `check_panel_joins` and `wire_joins` from CH5 Agent's `joins.json` work and are checked in SIMPL 4.32 |
 | **M8** Debugger traces | Read saved Debugger traces | Later |
 
 **The first version (M0 to M3) is done (2026-11-24):** a fresh Claude Code session used SIMPL Agent in plain English to explain a program, check it (matching SIMPL's F12 exactly) and add a One Shot. SIMPL reloaded the edit and compiled it exactly as predicted.
@@ -192,9 +193,25 @@ These are built into the tools and the skill:
 
   **The fix:** `remove_symbol` and `add_module` with `connect` by name in one `apply_edits`. SIMPL compiled both re-placed test programs as predicted and re-saved them byte for byte. When SIMPL has marked a module incomplete, it also marks every folder above it; `remove_symbol` clears those marks once nothing incomplete is left, as SIMPL does.
 
+### M7: Touch panels 🔨 (2026-11-25)
+
+- **Source:** the join map that CH5 Agent, a separate personal tool, writes for the CH5 panels it generates (`joins.json`: each join's type, number and SIMPL signal `in`/`out`, the XPanel's IP ID, and joins with no SIMPL name yet). VT Pro-e and Construct files aren't read.
+- **`check_panel_joins`** finds the panel, XPanel or EISC at the map's IP ID (or takes a symbol) and compares each join direction:
+  - **ok**, **missing** (nothing wired) or **different** (another signal);
+  - **joins the panel uses without a SIMPL name**, and what the program has on them;
+  - **joins the program wires that the panel doesn't use** (information only).
+
+  It returns a ready `wire_joins` list for the missing ones.
+- **`wire_joins {joins_file}`** wires from the map in one edit, filling only empty joins. It refuses one already wired to a different signal and says which, so the user decides; listing a join in `joins` replaces it. Wiring the same map again changes nothing. The history records the joins as wired, not just the file name.
+- **Fixes found on the way:**
+  - A join list only grows on the side being wired. A public TSW-760 has 32 serial inputs but 18 serial outputs, and rewiring its inputs used to equalise them.
+  - A signal a pin lets go of (rewired or disconnected) is removed at the end of the edit when nothing else uses it, as SIMPL drops unused signals on its next save.
+- **Proof:**
+  - Every wired pin on the panel symbols in the SIMPL 4.3x corpus files reads back as exactly one join, and rewiring each panel from its own joins leaves the file byte for byte.
+  - Live in SIMPL 4.32: an RMC3 program with an XPanel 3.0 at IP ID 03, wired from CH5 Agent's test `joins.json`. Its digital, analog and serial joins compiled with exactly the predicted messages and re-saved byte for byte, including after breaking and restoring joins.
+
 ### Later
 
-- **M7 Touch panels:** check that a program's joins match its touch panel, and wire a panel's joins in bulk.
 - **M8 Debugger traces:** read saved SIMPL Debugger traces to explain what happened.
 - **Probably never:** live signal watching. If it is ever built, it will be read-only.
 

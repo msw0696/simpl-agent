@@ -38,7 +38,7 @@ OP_KEYS: dict[str, tuple[set[str], set[str]]] = {
     "add_module": ({"module", "folder"}, {"connect", "parameters", "comment", "new_signal_type"}),
     "add_device": ({"device", "address"}, {"network", "parameters", "connect"}),
     "remove_device": ({"device"}, set()),
-    "wire_joins": ({"symbol", "joins"}, set()),
+    "wire_joins": (set(), {"symbol", "joins", "joins_file"}),
     "connect": ({"symbol", "pin"}, {"signal", "new_signal_type"}),
     "set_parameter": ({"symbol", "pin", "value"}, set()),
     "set_comment": ({"symbol", "text"}, set()),
@@ -150,7 +150,24 @@ class EditTools:
             ed.add_device(devlib, e["device"], e["address"], e.get("network"), parameters=e.get("parameters"),
                           connect=e.get("connect"))
         elif op == "wire_joins":
-            ed.wire_joins(e["symbol"], e["joins"])
+            if ("joins" in e) == ("joins_file" in e):
+                raise EditError("give either 'joins' or 'joins_file' (CH5 Agent's joins.json)")
+            if "joins_file" in e:
+                from .panel_joins import JoinMapError, find_panel, load_join_map
+
+                try:
+                    jm = load_join_map(e["joins_file"])
+                    sym = ed.find_symbol(e["symbol"]) if e.get("symbol") is not None else None
+                    panel, _ = find_panel(ed.prog, ed.lib, jm["ip_id"], sym)
+                except JoinMapError as err:
+                    raise EditError(str(err)) from None
+                # Recorded in the history as wired, so it stays readable when the file changes.
+                e["symbol_used"], e["joins_used"] = f"#{panel['handle']}", jm["joins"]
+                ed.wire_joins(panel["handle"], jm["joins"], keep_existing=True)
+            else:
+                if e.get("symbol") is None:
+                    raise EditError("give the panel's 'symbol' ('#h' from device_tree)")
+                ed.wire_joins(e["symbol"], e["joins"])
         elif op == "remove_device":
             devlib = self._device_library()
             if devlib is None:
@@ -212,6 +229,7 @@ class EditTools:
                 self._apply_one(ed, e)
             except EditError as err:
                 raise ToolError(f"edit {i} ({e['op']}) refused, nothing was changed: {err}") from err
+        ed.finish()  # signals the edit left unused go, as SIMPL drops them on its next save
         new_bytes = ed.raw.to_bytes()
         check = load(rawfile.parse(new_bytes))
         added = sorted(structural_problems(check) - before_struct)

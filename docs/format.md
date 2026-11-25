@@ -331,3 +331,10 @@ A module written for the conference-room test program (`DisplayFeedback.usp`: `B
 - Which pins each symbol requires (what makes `CF=1`).
 - How SIMPL adds devices other than the proven ones (Cresnet, cards, configurable slots).
 - Why SIMPL reports 40 LGCMCVT102 and 42 LGCMCVT103 on signals wired to Smart Graphics list extenders (`.ced`, SmC 2942, under an XPanel) in the public LibraryProgram, which `find_problems` doesn't predict. The same messages appear before and after adding a device, so they're a `find_problems` gap, not a device one.
+
+## Touch-panel joins against a join map (M7, 2026-11-25)
+- **Reading joins back:** a panel-style symbol's pin p is digital join p up to the digital list's size, then analog join p - n1, then serial join p - n1 - n2, for inputs (with `n1I`, `n2I`) and outputs (with `n1O`, `n2O = mO - n1O`) separately. Every wired pin on the panel symbols in the SIMPL 4.3x corpus files reads back as exactly one join.
+- **Lists of unequal length exist:** a public TSW-760 has 32 serial inputs but 18 serial outputs (`tO - mO`). A list only grows on the side whose join is past its end; rewiring every corpus panel from its own joins leaves the file byte for byte.
+- **XPanel 3.0 Crestron HTML5** placed by `add_device` gets lists of 32 per type (its `Expand_by`), so serial join 1's output is O65.
+- **Unused signals:** SIMPL drops a signal nothing uses on its next save. After a join was rewired from `Level_Fb` back to `Level`, SIMPL 4.32's re-save removed `Level_Fb` and changed nothing else. `apply_edits` now removes such signals at the end of the edit (not straight away, so a pin can be disconnected and reconnected to the same signal in one call).
+- **Live check:** an RMC3 program with an XPanel 3.0 at IP ID 03 was wired from a CH5 Agent `joins.json` (two digital, one analog and one serial join, both directions). It compiled with exactly the predicted warning and notices, and SIMPL re-saved it byte for byte, also after joins were broken and restored.

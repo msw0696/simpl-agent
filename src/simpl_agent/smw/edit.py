@@ -415,11 +415,14 @@ class Editor:
         if not total or not total.isdigit() or n > int(total):
             raise EditError(f"#{s.handle} has no pin {letter}{n} (it has {total or 0}); adding pins isn't supported yet")
         snapshot = self._snapshot()
+        old = (s.inputs if letter == "I" else s.outputs).get(n)
         try:
             if signal in (None, ""):
                 self._set_pin_key(s.record, letter, n, None)
                 self._reload()
-                self.log.add(f"disconnected #{s.handle} {letter}{n}")
+                self.release(old)
+                self.log.add(f"disconnected #{s.handle} {letter}{n}" if old is not None
+                             else f"#{s.handle} {letter}{n} was already unconnected")
                 return
             sig = self._typed_signal(signal, self.lib.get(s.code) if self.lib else None, letter, n, new_signal_type,
                                      record=s.record)
@@ -430,7 +433,37 @@ class Editor:
             self._restore(snapshot)
             raise
         self._reload()
+        if old != sig:
+            self.release(old)
         self.log.add(f"connected #{s.handle} {letter}{n} to {self.prog.signal_name(sig)!r}")
+
+    def release(self, handle: int | None) -> None:
+        """Note a signal a pin let go of; finish() removes it if nothing uses it by then."""
+        if handle is not None:
+            self.__dict__.setdefault("_released", set()).add(handle)
+
+    def finish(self) -> list[str]:
+        """End of an edit: remove signals pins let go of that nothing uses any more, as SIMPL does
+        on its next save (it dropped one after a join was rewired, 2026-11-25). Returns their names."""
+        names = self._drop_unused(self.__dict__.pop("_released", set()))
+        if names:
+            self.log.add(f"removed signals nothing uses any more: {names}")
+        return names
+
+    def _drop_unused(self, handles) -> list[str]:
+        """Remove the given signals if no symbol uses them any more: SIMPL doesn't keep unused
+        signals (it dropped one on re-save after a join was rewired, 2026-11-25). Returns names."""
+        used = {h for o in self.prog.symbols.values() for h in list(o.inputs.values()) + list(o.outputs.values())}
+        builtin = set(self.prog.builtin_signals.values())
+        gone = sorted({h for h in handles if h not in used and h not in builtin and h in self.prog.signals
+                       and self.prog.signals[h].record is not None})
+        if not gone:
+            return []
+        names = [self.prog.signals[h].name for h in gone]
+        drop = {id(self.prog.signals[h].record) for h in gone}
+        self.raw.items = [it for it in self.raw.items if id(it) not in drop]
+        self._reload()
+        return names
 
     def set_parameter(self, symbol: str | int, pin: str, value: str) -> None:
         """Change an existing parameter P<n> (e.g. '5s', '50%', '10d')."""
@@ -535,14 +568,7 @@ class Editor:
             self._rebuild_children(parent, [c for c in self.prog.symbols[parent].children if c != s.handle])
             self.raw.items = [it for it in self.raw.items if it is not s.record]
             self._reload()
-            used = {h for o in self.prog.symbols.values() for h in list(o.inputs.values()) + list(o.outputs.values())}
-            builtin = set(self.prog.builtin_signals.values())
-            gone = [h for h in touched if h not in used and h not in builtin and h in self.prog.signals
-                    and self.prog.signals[h].record is not None]
-            names = [self.prog.signals[h].name for h in sorted(gone)]
-            drop = {id(self.prog.signals[h].record) for h in gone}
-            self.raw.items = [it for it in self.raw.items if id(it) not in drop]
-            self._reload()
+            names = self._drop_unused(touched)
             self._clear_folder_flags(parent)
         except Exception:
             self._restore(snapshot)
@@ -808,11 +834,11 @@ class Editor:
 
         return add_device(self, devlib, device, address, network, parameters=parameters, connect=connect)
 
-    def wire_joins(self, symbol: str | int, joins: list[dict]) -> list[str]:
+    def wire_joins(self, symbol: str | int, joins: list[dict], keep_existing: bool = False) -> list[str]:
         """Connect a panel's or EISC's joins by type and number; see joins.py."""
         from .joins import wire_joins
 
-        return wire_joins(self, symbol, joins)
+        return wire_joins(self, symbol, joins, keep_existing=keep_existing)
 
     def remove_device(self, devlib, device: str | int) -> list[str]:
         """Remove a device and everything inside it, as SIMPL's Delete does; see device_edit.py."""
