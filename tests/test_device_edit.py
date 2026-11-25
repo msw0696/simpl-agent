@@ -369,3 +369,19 @@ def test_wire_joins_refusals(libs) -> None:
         assert ed.raw.to_bytes() == before
     with pytest.raises(EditError, match="isn't a panel-style symbol"):
         ed.wire_joins("#9", [{"type": "digital", "join": 1, "in": "x"}])  # a COM driver
+
+
+
+def test_output_cards_match_simpl(libs) -> None:
+    """f12-round8 'outs': a DMC-4K-HDO into a DM Outputs holder, the default DM Outputs deleted, a DMCO-22
+    in its place; SIMPL reused the freed handles (lowest unused first) for the DMCO-22 and its symbol."""
+    if not (DATA / "outs-step3.smw").exists():
+        pytest.skip("round 8 saves not copied here")
+    ed = editor(libs, "outs-step0.smw")
+    holders = sorted((d for d in ed.prog.devices.values() if d.name == "DM Outputs"), key=lambda d: d.handles[0])
+    ed.add_device(libs[1], "DMC-4K-HDO", 1, network=f"#{holders[1].handles[0]}")
+    assert same_except_name(ed.raw.to_bytes(), (DATA / "outs-step1.smw").read_bytes())
+    ed.remove_device(libs[1], f"#{holders[0].handles[0]}")
+    assert same_except_name(ed.raw.to_bytes(), (DATA / "outs-step2.smw").read_bytes())
+    ed.add_device(libs[1], "DMCO-22", 17, network="#589")
+    assert same_except_name(ed.raw.to_bytes(), (DATA / "outs-step3.smw").read_bytes())

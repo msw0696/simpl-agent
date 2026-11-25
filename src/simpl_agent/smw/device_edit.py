@@ -70,6 +70,7 @@ SLOT_DEVICE_RULES = {int(c): r for c, r in _RULES.get("codes", {}).items()}
 SLOT_TYPE_RULES: dict[str, dict] = dict(_RULES.get("slot_types", {}))
 # Card types proven by SIMPL 4.32 saves that the corpus doesn't show (f12-round8).
 SLOT_DEVICE_RULES.setdefault(5917, {"slc": False, "db": True, "seen": 0})  # DMC-4KZ-C-DSP
+SLOT_DEVICE_RULES.setdefault(1891, {"slc": False, "db": True, "seen": 0})  # DMCO-22
 
 
 def address_for_slot(address: str | int, slot_info: dict) -> str:
@@ -342,12 +343,34 @@ def support_problem(devlib: DeviceLibrary, lib, dd: DeviceDef, series: str | Non
     return None
 
 
+class Handles:
+    """Hands out handles the way SIMPL does for devices and symbols: the lowest unused one first, so
+    gaps left by deletes fill before the maximum grows (SIMPL 4.32 gave a DMCO-22 placed after a
+    delete the freed handles 607-609 and symbol 22, then max+1; f12-round8). ``used=None`` counts on
+    from ``start`` (rebuilding records that already exist)."""
+
+    def __init__(self, start: int, used: set[int] | None = None) -> None:
+        self.used = set(used) if used is not None else None
+        self.n = start
+
+    def take(self) -> int:
+        if self.used is None:
+            v, self.n = self.n, self.n + 1
+            return v
+        while self.n in self.used:
+            self.n += 1
+        self.used.add(self.n)
+        return self.n
+
+
 class _Build:
     """Records for a device and everything SIMPL puts inside it, numbered depth first."""
 
     def __init__(self, ed: Editor, devlib: DeviceLibrary, dvvr: str, smvr: str, next_sm: int,
-                 next_cm: int = 1) -> None:
-        self.ed, self.devlib, self.dvvr, self.smvr, self.next_sm = ed, devlib, dvvr, smvr, next_sm
+                 next_cm: int = 1, dv_handles: Handles | None = None, sm_handles: Handles | None = None) -> None:
+        self.ed, self.devlib, self.dvvr, self.smvr = ed, devlib, dvvr, smvr
+        self.sm_handles = sm_handles or Handles(next_sm)
+        self.dv_handles = dv_handles  # None: count on from each device's own handle
         self.next_cm = next_cm
         self.cm: list[list[tuple[str | None, str]]] = []
         self.dv: list[list[tuple[str | None, str]]] = []
@@ -373,7 +396,7 @@ class _Build:
         ls = self.symbol_for(dd)
         sym = None
         if ls is not None:
-            sym, self.next_sm = self.next_sm, self.next_sm + 1
+            sym = self.sm_handles.take()
         cm = None
         # A Cm record for every device with a serial settings dialog (209 of 209 in the corpus, none for
         # the 3,130 without): the COM port's defaults, or just Tis=1 off a COM port (a CP3N's I/O card).
@@ -384,27 +407,31 @@ class _Build:
             cm, self.next_cm = self.next_cm, self.next_cm + 1
             self.cm.append([("ObjTp", "Cm"), ("H", str(cm)), ("DvH", str(handle))] + settings)
         my_parent_sym = sym if sym is not None else sym_parent
-        # A symbol's Name parameter: the device's own name, except that built-in parts (Fixed<n>)
-        # take the name of the device they belong to (DMC-4KZ-C Advanced -> "DMC-4KZ-C"; f12-round8).
+        # A symbol's Name parameter: the device's own name, except that built-in parts (Fixed<n>) without an
+        # InstanceName of their own take their owner's (DMC-4KZ-C Advanced -> "DMC-4KZ-C"; a DMCO-22's
+        # DMC-CATO-HD parts keep "DMC-CATO-HD" and pass it to their outputs; f12-round8).
         name_param = name_param or instance_name(dd)
-        nxt, slots, child_syms, empty = handle + 1, [], [], {}
+        if self.dv_handles is None:
+            self.dv_handles = Handles(handle + 1)
+        slots, child_syms, empty = [], [], {}
         for pos, typ, fixed in slot_layout(self.devlib, dd):
             info = self.devlib.slots.get(typ)
             if not info or not info.get("Code"):
                 raise EditError(f"{dd.name}: slot type {typ} isn't in the device library")
-            sh, nxt = nxt, nxt + 1
+            sh = self.dv_handles.take()
             slots.append(sh)
             ad = slot_address(info, pos)
             slf = "Ex" if info.get("Transport") in ("IR", "Power") else None
             if fixed is None:
                 empty.setdefault(typ, []).append((sh, ad, info, slf))
                 continue
-            ch = nxt
+            ch = self.dv_handles.take()
             self.dv.append(slot_record(name=typ, handles=[sh], parent=handle, slot_code=info["Code"], dvvr=self.dvvr,
                                        addresses=[ad], child=ch, slf=slf, objver=info.get("ObjVer") or "1"))
-            nxt, syms = self.device(fixed, handle=ch, parent=sh, address=ad, slot_code=info["Code"],
+            _, syms = self.device(fixed, handle=ch, parent=sh, address=ad, slot_code=info["Code"],
                                     sym_parent=my_parent_sym, depth=depth + 1,
-                                    name_param=name_param if built_in_by_fixed(dd, pos) else None, slot_info=info)
+                                    name_param=(name_param if built_in_by_fixed(dd, pos) and not fixed.fields.get("InstanceName")
+                                                else None), slot_info=info)
             child_syms += syms
         for typ, rows in empty.items():
             for i in range(0, len(rows), MAX_SLOTS_PER_RECORD):
@@ -416,6 +443,7 @@ class _Build:
         self.dv.append(device_record(name=instance_name(dd), handle=handle, parent=parent, dd=dd, slot_code=slot_code,
                                      dvvr=self.dvvr, address=address, symbol=sym, db=db, et=et, children=slots,
                                      cm=cm))
+        nxt = self.dv_handles.n
         if sym is None:
             return nxt, child_syms
         self.sm[sym] = device_symbol_record(handle=sym, ls=ls, smvr=self.smvr, device=handle, parent=sym_parent,
@@ -462,6 +490,16 @@ def _unique_devices(ed: Editor) -> list[Device]:
             seen.add(id(d))
             out.append(d)
     return out
+
+
+def _insert_sorted(ed: Editor, rec: Record, obj_type: str, after_types: tuple[str, ...]) -> None:
+    """Insert into ``obj_type``'s run in handle order (a reused handle goes back into its gap)."""
+    h = int(rec.get("H"))
+    for i, it in enumerate(ed.raw.items):
+        if isinstance(it, Record) and it.type == obj_type and (it.get("H") or "").isdigit() and int(it.get("H")) > h:
+            ed.raw.items.insert(i, rec)
+            return
+    ed._insert_record(rec, obj_type, after_types=after_types)
 
 
 def _insert_dv_sorted(ed: Editor, rec: Record) -> None:
@@ -574,8 +612,9 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
     snapshot = ed._snapshot()
     try:
         # 1. Split the slot record so the chosen address has a record of its own.
-        all_dv = [h for r in ed.raw.of_type("Dv") for h in parse_handles(r.get("H"))]
-        dev_h = max(all_dv) + 1
+        used_dv = {h for r in ed.raw.of_type("Dv") for h in parse_handles(r.get("H"))}
+        dv_handles = Handles(2, used_dv)
+        dev_h = dv_handles.take()
         hs = parse_handles(slot.record.get("H"))
         i = addrs.index(addr)
         rec = slot.record
@@ -604,13 +643,15 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
             _insert_dv_sorted(ed, p)
 
         # 2. The device and everything SIMPL puts inside it, numbered depth first.
-        sm_h = ed._next_handle("Sm")
+        sm_handles = Handles(1, {int(r.get("H")) for r in ed.raw.of_type("Sm") if (r.get("H") or "").isdigit()})
         db_h = ed._next_handle("Db") if with_db else None
         et_h = ed._next_handle("Et") if dd.fields.get("DefaultIP") and on_network else None
-        b = _Build(ed, devlib, dvvr, smvr, sm_h, next_cm=ed._next_handle("Cm"))
-        b.device(dd, handle=dev_h, parent=hs[i], address=addr, slot_code=slot_code, sym_parent=container.symbol,
-                 slot_info=devlib.slots.get(slot.name or "") or {},
-                 db=db_h, et=et_h)
+        b = _Build(ed, devlib, dvvr, smvr, 0, next_cm=ed._next_handle("Cm"), dv_handles=dv_handles,
+                   sm_handles=sm_handles)
+        _, top_syms = b.device(dd, handle=dev_h, parent=hs[i], address=addr, slot_code=slot_code,
+                               sym_parent=container.symbol, slot_info=devlib.slots.get(slot.name or "") or {},
+                               db=db_h, et=et_h)
+        sm_h = top_syms[0]
         for lines in b.dv:
             _insert_dv_sorted(ed, Record(lines=lines))
 
@@ -638,7 +679,7 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
 
         # 4. Logic symbols, in handle order.
         for h in sorted(b.sm):
-            ed._insert_record(Record(lines=b.sm[h]), "Sm", after_types=("Bw", "Bk"))
+            _insert_sorted(ed, Record(lines=b.sm[h]), "Sm", after_types=("Bw", "Bk"))
 
         # 6. The network's symbol lists its devices in address order.
         ed._reload()

@@ -150,14 +150,14 @@ These are built into the tools and the skill:
 - **`add_device`** places a device at a free IP ID (4-Series, 3-Series, MC3 Ethernet) or Cresnet ID:
   - **What it writes, as SIMPL does:** the device, its model record and default IP, and its logic symbol under the network in ID order. Free IDs stay in one record.
   - **Frames:** a device with its own slots (DM frames, NVX endpoints, ST-IO) is built with every slot and every device SIMPL puts inside it, numbered the way SIMPL numbers them.
-  - **Cards:** cards go into a frame's slots (`network` = the frame, `address` = the slot number), for card types SIMPL writes consistently: DM input cards, DM endpoints, HDBT receivers and similar.
+  - **Cards:** cards go into a frame's slots (`network` = the frame, `address` = the slot number), for card types SIMPL writes consistently: DM input and output cards, DM endpoints, HDBT receivers and similar. A full output card (DMCO-22) replaces the default "DM Outputs" after `remove_device`.
   - **Which devices:** any whose pins are all optional and whose parameters have known defaults (touch panels, XPanels, EISCs, DM frames and endpoints, NVX and many more). Others are refused with the reason.
 - **Proof:**
   - It rebuilds SIMPL 4.32's own saves byte for byte: a TSW-1070 and an EISC, and a DM-MD8x8 with input cards, a DM-NVX-36x, a CEN-IO-COM-102, a CEN-RGBHV8x4, XPanel and TSW panels, placed in SIMPL by SIMPL Agent driving SIMPL's own window (`tools/simpl_gui.py`).
   - `tools/prove_devices.py` and `tools/prove_frames.py` rebuild every device and frame in the 380 public programs from today's libraries. 770 device types match; 63 frames rebuild identically; 238 of 239 cards in slots rebuild identically. In modern files the only differences left are things users attach later (logic modules, HDBaseT links, replaced drivers).
   - Automatic compiles: 15 device types in one program; a DM-MD8x8, DM-NVX-36x and ST-IO together; a DM-MD8x8 with two input cards plus a DM-TX-201-C. All 0 errors, 0 warnings and 0 notices.
 - **Panels:** `wire_joins` maps joins to pins (digital first, then analog, then serial, for inputs and outputs; all 5,045 wired panel pins in modern public files fit) and grows a list's inputs and outputs together when a join is past its end. SIMPL re-saved a grown, wired TSW-1070 byte for byte, and it compiled with exactly the predicted messages.
-- **Next:** DM output cards and COM/IR drivers, devices with required pins, and device parameters without defaults (e.g. a TCP/IP Client's port).
+- **Next:** COM/IR drivers placed by users, devices with required pins, and device parameters without defaults (e.g. a TCP/IP Client's port).
 
 ### Later
 
@@ -205,7 +205,7 @@ Optional environment variables:
 ## Development
 
 ```
-.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 183 tests (corpus tests need the local corpus)
+.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 184 tests (corpus tests need the local corpus)
 .venv\Scripts\python -m pytest                             # fast tests only
 .venv\Scripts\python -m ruff check .
 python -I tools/fetch_github_corpus.py    # download public sample programs (outside the repo)
