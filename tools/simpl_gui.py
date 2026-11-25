@@ -103,10 +103,13 @@ def target() -> tuple[int, str, tuple[int, int, int, int]]:
     ws = windows()
     if not ws:
         sys.exit("SIMPL isn't running (python tools/simpl_gui.py launch)")
-    for h, t, r, fg in ws:
-        if fg:
-            return h, t, r
     main = max(ws, key=lambda w: (w[2][2] - w[2][0]) * (w[2][3] - w[2][1]))
+    # An open dialog blocks the main window even when it has slipped behind it: aim at the topmost one
+    # (EnumWindows lists top-level windows in z-order, top first).
+    dialogs = [w for w in ws if w[0] != main[0]]
+    if dialogs:
+        h, t, r, _ = dialogs[0]
+        return h, t, r
     return main[0], main[1], main[2]
 
 

@@ -616,8 +616,13 @@ class Tools(EditTools):
             proc = find_device_def(devlib, processor)
         except EditError as e:
             raise ToolError(str(e)) from None
-        if not proc.fields.get("SMWRev") or "SubNetType" not in proc.fields:
+        from .smw.new_program import PROVEN_PROCESSORS
+
+        if "Main" not in proc.occupies or proc.fields.get("Cls") != "CS":
             raise ToolError(f"{proc.name} isn't a control processor")
+        if proc.code not in PROVEN_PROCESSORS:
+            raise ToolError(f"new programs for {proc.name} aren't proven yet; proven: "
+                            f"{', '.join(sorted(PROVEN_PROCESSORS.values()))}")
         versions = installed_versions()
         sv = smpwin_version()
         if sv is None or "DbVr" not in versions or "DvcDbVr" not in versions:

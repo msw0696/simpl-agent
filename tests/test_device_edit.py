@@ -288,7 +288,8 @@ def test_remove_device_refuses_built_in_parts(libs) -> None:
 
 
 
-@pytest.mark.parametrize("name", ["new-cp4n", "new-cp3n", "new-rmc4", "new-mc4"])
+@pytest.mark.parametrize("name", ["new-cp4n", "new-cp3n", "new-rmc4", "new-mc4", "new-cp4", "new-pro4", "new-av4",
+                                  "new-dinap4", "new-mc3", "new-rmc3", "new-cp3", "new-pro3", "new-mpc3302"])
 def test_new_program_matches_simpls_file_new(libs, name) -> None:
     """SIMPL 4.32's File > New SIMPL program, made by driving SIMPL's window (f12-round8)."""
     from simpl_agent.smw.new_program import new_program
@@ -320,6 +321,8 @@ def test_new_program_tool_never_overwrites(libs, tmp_path: Path) -> None:
     assert not again["ok"] and "already exists" in again["error"]
     bad = t.call("new_program", {"path": str(tmp_path / "x.smw"), "processor": "TSW-1070"})
     assert not bad["ok"] and "isn't a control processor" in bad["error"]
+    unproven = t.call("new_program", {"path": str(tmp_path / "y.smw"), "processor": "CP2E"})
+    assert not unproven["ok"] and "aren't proven yet" in unproven["error"]
     # A device can go straight onto the new program.
     r2 = t.call("apply_edits", {"path": str(p), "revision": r["revision"], "summary": "panel",
                                 "edits": [{"op": "add_device", "device": "TSW-1070", "address": "03"}]})

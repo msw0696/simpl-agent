@@ -10,6 +10,11 @@ from ..catalog.devices import DeviceLibrary
 from .device_edit import _Build
 from .rawfile import RawFile, Record
 
+# Processors whose new program SIMPL Agent rebuilds byte for byte from SIMPL 4.32's own File > New
+# (f12-round8). Others aren't proven: the Ethernet-Only 4-series gets an extra logic symbol, the
+# 2-Series uses ALPHA slot addresses, DMPS3s have read-only string parameters.
+PROVEN_PROCESSORS = {1766: 'MC3.', 2886: 'CP3', 3181: 'PRO3.', 3233: 'CP3N', 3816: 'RMC3', 5919: 'MPC3-302', 6089: 'RMC4', 6101: 'DIN-AP4', 6114: 'MC4', 6136: 'CP4', 6343: 'PRO4', 6356: 'AV4', 6423: 'CP4N'}
+
 TOP_SYMBOLS = [  # (handle, SmC, Nm): what every new program starts with
     (1, "157", "Central Control Modules"), (2, "157", "Network Modules"), (3, "157", "Ethernet"),
     (4, "156", "Logic"), (5, "157", "DefineArguments"),

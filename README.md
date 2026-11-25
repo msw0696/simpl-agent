@@ -101,7 +101,7 @@ These are built into the tools and the skill:
 | **M3** Edit and safety | `apply_edits`, write gate, history and undo, live workflow with SIMPL open | ✅ Live-tested in SIMPL 4.32 |
 | Extras | Placing macros and SIMPL+ modules; unattended compiling | ✅ |
 | **M4** Devices | Device tree, free IDs, adding devices and frames | 🔨 In progress |
-| **M5** New programs | Start a program from scratch | ✅ `new_program` (CP4N, CP3N, RMC4, MC4 proven) |
+| **M5** New programs | Start a program from scratch | ✅ `new_program`: 13 processors proven identical to SIMPL's File > New (CP3, CP3N, CP4, CP4N, PRO3, PRO4, AV4, MC3, MC4, RMC3, RMC4, DIN-AP4, MPC3-302) |
 | **M6** SIMPL+ | Write and compile SIMPL+ modules | Later |
 | **M7** Touch panels | Check joins between program and panel | Later |
 | **M8** Debugger traces | Read saved Debugger traces | Later |
@@ -203,7 +203,7 @@ Optional environment variables:
 ## Development
 
 ```
-.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 172 tests (corpus tests need the local corpus)
+.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 181 tests (corpus tests need the local corpus)
 .venv\Scripts\python -m pytest                             # fast tests only
 .venv\Scripts\python -m ruff check .
 python -I tools/fetch_github_corpus.py    # download public sample programs (outside the repo)
