@@ -140,7 +140,7 @@ def symbol_shape_problem(ls: LibSymbol) -> str | None:
     f = ls.fields
     if driver_layout(ls) is not None:
         return None  # serial drivers: parameters are written blank
-    if f.get("CheckCnx") is None and f.get("Expand"):
+    if f.get("CheckCnx") is None and f.get("Expand") == "expand_inputs_with_outputs":
         # SIMPL marks these incomplete as soon as they're placed (the Virtual Communication Port, CF=1 in its
         # own save; f12-round8) and won't compile until they're wired. Without Expand they're fine
         # (CEN-RGBHV8x4, CEN-IO-COM-102).
@@ -175,6 +175,8 @@ def device_record(*, name: str, handle: int, parent: int, dd: DeviceDef, slot_co
         lines.append(("DbH", str(db)))
     if et is not None:
         lines.append(("EtH", str(et)))
+    if f.get("SbObjRev"):
+        lines.append(("SbObjRev", f["SbObjRev"]))  # 8 of 8 in the corpus; a CP3N in SIMPL's new program
     if cm is not None:
         lines.append(("CmH", str(cm)))
     if children:
@@ -225,7 +227,19 @@ MAX_SLOTS_PER_RECORD = 501  # 39 of 39 corpus records that hit it
 
 
 def slot_address(slot_info: dict, pos: int) -> str:
-    return f"{pos:02X}" if slot_info.get("AddressFormat") == "HEX" else f"{pos:02d}"
+    """A slot's address text by its type's AddressFormat (all checked against SIMPL 4.32's new programs)."""
+    from .edit import EditError
+
+    fmt = slot_info.get("AddressFormat")
+    if fmt == "None":
+        return "None"  # e.g. a Cresnet network's PowerSlot (new CP4N program)
+    if fmt in ("HEX", "Hex"):
+        return f"{pos:02X}"
+    if fmt == "HEXM1":
+        return f"{pos - 1:02X}"  # IR gateway IDs count from 00 (new MC4 program)
+    if fmt in (None, "DECIMALCOMPM1"):
+        return f"{pos:02d}"
+    raise EditError(f"slot type {slot_info.get('Name')} uses address format {fmt}, not supported yet")
 
 
 def slot_layout(devlib: DeviceLibrary, dd: DeviceDef) -> list[tuple[int, str, DeviceDef | None]]:
@@ -361,7 +375,11 @@ class _Build:
         if ls is not None:
             sym, self.next_sm = self.next_sm, self.next_sm + 1
         cm = None
-        settings = com_settings(slot_info or {})
+        # A Cm record for every device with a serial settings dialog (209 of 209 in the corpus, none for
+        # the 3,130 without): the COM port's defaults, or just Tis=1 off a COM port (a CP3N's I/O card).
+        settings = None
+        if any(v == "Serial-Dlg" for k, v in dd.fields.items() if k.startswith("ConfigDlg")):
+            settings = com_settings(slot_info or {}) or [("Tis", "1")]
         if settings is not None:
             cm, self.next_cm = self.next_cm, self.next_cm + 1
             self.cm.append([("ObjTp", "Cm"), ("H", str(cm)), ("DvH", str(handle))] + settings)

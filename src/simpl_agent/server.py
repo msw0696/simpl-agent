@@ -37,11 +37,24 @@ from .smw import rawfile
 from .smw.edit import FOLDER_CODE, is_simple, load_verified_codes
 from .smw.model import Program, load
 
+
+def _library_release(symlib_path: Path) -> str:
+    """The symbol library's release (RelVrs in its FSgntr, e.g. '1247'): new records' SmVr and DvVr."""
+    import re
+
+    with open(symlib_path, "rb") as f:
+        head = f.read(4096).decode("latin-1")
+    m = re.search(r"RelVrs=(\d+)", head)
+    if not m:
+        raise ToolError(f"no release number in {symlib_path}")
+    return m.group(1)
+
+
 TOOL_NAMES = (
     "simpl_agent_status", "describe_program", "find_library_symbols", "library_symbol_details",
     "folder_tree", "list_folder", "show_symbol", "find_signals", "follow_signal", "find_problems",
     "apply_edits", "edit_history", "undo_last_edit", "restore_version", "wait_for_simpl_save",
-    "module_details", "compile_program", "device_tree", "free_ids", "find_library_devices",
+    "module_details", "compile_program", "device_tree", "free_ids", "find_library_devices", "new_program",
 )
 PROGRAM_EXTS = {".smw", ".umc", ".cmc"}
 KNOWN_SIGNATURES = {"SimplWindow": "program", "CresMacro": "macro", "UserMacro": "macro"}
@@ -579,6 +592,51 @@ class Tools(EditTools):
             rows.append(row)
         return {"query": query, "count": len(hits), "results": rows}
 
+    def new_program(self, path: str, processor: str, system_name: str = "") -> dict[str, Any]:
+        """Write a new, empty program for ``processor``, the way SIMPL's File > New does."""
+        from .smw.device_edit import find_device_def
+        from .smw.edit import EditError
+        from .smw.new_program import installed_versions, new_program, smpwin_version
+
+        p = Path(path)
+        if p.suffix.lower() != ".smw":
+            raise ToolError("give a path ending in .smw")
+        if not p.is_absolute():
+            raise ToolError("give a full path, e.g. C:\\Users\\me\\Documents\\Job\\Job.smw")
+        if p.exists():
+            raise ToolError(f"{p} already exists; new_program never overwrites a program")
+        if not p.parent.is_dir():
+            raise ToolError(f"folder {p.parent} doesn't exist")
+        if system_name and ("\r" in system_name or "\n" in system_name or len(system_name) > 100):
+            raise ToolError("system_name must be one line, up to 100 characters")
+        devlib = self._device_library()
+        if devlib is None:
+            raise ToolError("SIMPL's device library (iodev.tio) isn't available")
+        try:
+            proc = find_device_def(devlib, processor)
+        except EditError as e:
+            raise ToolError(str(e)) from None
+        if not proc.fields.get("SMWRev") or "SubNetType" not in proc.fields:
+            raise ToolError(f"{proc.name} isn't a control processor")
+        versions = installed_versions()
+        sv = smpwin_version()
+        if sv is None or "DbVr" not in versions or "DvcDbVr" not in versions:
+            raise ToolError("couldn't read SIMPL's installed version from smpwin.exe and the registry")
+        versions.update(RelVrs=sv[0], SavedBy=sv[1])
+        lib_version = _library_release(self.library_path)
+        try:
+            raw = new_program(devlib, self.index().library, proc, file_name=p.name, system_name=system_name,
+                              versions=versions, lib_version=lib_version)
+        except EditError as e:
+            raise ToolError(str(e)) from None
+        data = raw.to_bytes()
+        with open(p, "xb") as f:  # never overwrite
+            f.write(data)
+        rev = hashlib.sha256(data).hexdigest()
+        return {"path": str(p), "revision": rev, "processor": proc.name, "bytes": len(data),
+                "note": "Written the way SIMPL's File > New does. Open it in SIMPL, or add devices and logic with "
+                        "apply_edits using this revision."}
+
     def device_tree(self, path: str, limit: int = 300) -> dict[str, Any]:
         from . import devices as dv
 
@@ -817,6 +875,13 @@ def create_server(tools: Tools | None = None) -> Any:
                  "add_device can place it (with the reason if not). Use the exact name in add_device.")
     async def find_library_devices(query: str, limit: int = 20) -> dict[str, Any]:
         return await _run("find_library_devices", query=query, limit=limit)
+
+    @server.tool(name="new_program", description="Create a new, empty SIMPL program (.smw) for a control "
+                 "processor (e.g. 'CP4N', 'CP3N', 'RMC4', 'MC4'), exactly as SIMPL's File > New does. Never "
+                 "overwrites: the path must not exist. system_name goes in the program header. Then use "
+                 "apply_edits (add_device, add_folder, add_symbol ...) with the returned revision.")
+    async def new_program(path: str, processor: str, system_name: str = "") -> dict[str, Any]:
+        return await _run("new_program", path=path, processor=processor, system_name=system_name)
 
     @server.tool(name="free_ids", description="Free and used IDs on each of the program's networks (Ethernet "
                  "IP IDs, Cresnet IDs, ports). network filters by name or transport, e.g. 'Ethernet'. Read-only; "

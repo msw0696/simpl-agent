@@ -285,3 +285,42 @@ def test_remove_device_refuses_built_in_parts(libs) -> None:
     assert ed.raw.to_bytes() == before
     ed.remove_device(libs[1], "TSW-1070")
     assert same_except_name(ed.raw.to_bytes(), (DATA / "dev-step0.smw").read_bytes())
+
+
+
+@pytest.mark.parametrize("name", ["new-cp4n", "new-cp3n", "new-rmc4", "new-mc4"])
+def test_new_program_matches_simpls_file_new(libs, name) -> None:
+    """SIMPL 4.32's File > New SIMPL program, made by driving SIMPL's window (f12-round8)."""
+    from simpl_agent.smw.new_program import new_program
+
+    want = DATA / f"{name}.smw"
+    if not want.exists():
+        pytest.skip("round 8 saves not copied here")
+    hd = rawfile.read(want)
+    fs, h = hd.first("FSgntr"), hd.first("Hd")
+    versions = {"RelVrs": fs.get("RelVrs"), "SavedBy": fs.get("SavedBy"), "DbVr": h.get("DbVr"),
+                "DvcDbVr": h.get("DvcDbVr")}
+    raw = new_program(libs[1], libs[0], libs[1].get(int(h.get("CnC"))), file_name=f"{name}.smw",
+                      system_name="New Test", versions=versions, lib_version=h.get("SmVr"))
+    assert raw.to_bytes() == want.read_bytes()
+
+
+def test_new_program_tool_never_overwrites(libs, tmp_path: Path) -> None:
+    from simpl_agent.catalog.index import load_index
+    from simpl_agent.server import Tools
+
+    t = Tools(home=tmp_path / "home")
+    t.windows = lambda: []
+    t._index, t._devlib = load_index(), libs[1]
+    p = tmp_path / "Job.smw"
+    r = t.call("new_program", {"path": str(p), "processor": "CP4N", "system_name": "Job"})
+    assert r["ok"] and p.exists(), r
+    assert structural_problems(load(rawfile.read(p))) == set()
+    again = t.call("new_program", {"path": str(p), "processor": "CP4N"})
+    assert not again["ok"] and "already exists" in again["error"]
+    bad = t.call("new_program", {"path": str(tmp_path / "x.smw"), "processor": "TSW-1070"})
+    assert not bad["ok"] and "isn't a control processor" in bad["error"]
+    # A device can go straight onto the new program.
+    r2 = t.call("apply_edits", {"path": str(p), "revision": r["revision"], "summary": "panel",
+                                "edits": [{"op": "add_device", "device": "TSW-1070", "address": "03"}]})
+    assert r2["ok"], r2

@@ -22,7 +22,7 @@ SIMPL Windows programs are large, flat graphs of symbols and signals. They're sa
 
 ## Tools
 
-20 tools. Every call is logged to `%LOCALAPPDATA%\SimplAgent\audit.jsonl`.
+21 tools. Every call is logged to `%LOCALAPPDATA%\SimplAgent\audit.jsonl`.
 
 | Group | Tool | What it does |
 |---|---|---|
@@ -41,6 +41,7 @@ SIMPL Windows programs are large, flat graphs of symbols and signals. They're sa
 | | `free_ids` | Free and used IP IDs and Cresnet IDs on each network |
 | | `find_library_devices` | Search SIMPL's device library; says where each device goes and whether `add_device` can place it |
 | Edit | `apply_edits` | One all-or-nothing batch of edits (below) |
+| | `new_program` | A new, empty program for a processor, exactly as SIMPL's File > New writes it |
 | History | `edit_history` | SIMPL Agent's changes to a program |
 | | `undo_last_edit` | Undo the last change, only while the file is exactly as that edit left it |
 | | `restore_version` | Go back to before any change, with a preview of what would be lost |
@@ -100,7 +101,7 @@ These are built into the tools and the skill:
 | **M3** Edit and safety | `apply_edits`, write gate, history and undo, live workflow with SIMPL open | ✅ Live-tested in SIMPL 4.32 |
 | Extras | Placing macros and SIMPL+ modules; unattended compiling | ✅ |
 | **M4** Devices | Device tree, free IDs, adding devices and frames | 🔨 In progress |
-| **M5** New programs | Start a program from scratch | Later |
+| **M5** New programs | Start a program from scratch | ✅ `new_program` (CP4N, CP3N, RMC4, MC4 proven) |
 | **M6** SIMPL+ | Write and compile SIMPL+ modules | Later |
 | **M7** Touch panels | Check joins between program and panel | Later |
 | **M8** Debugger traces | Read saved Debugger traces | Later |
@@ -158,7 +159,6 @@ These are built into the tools and the skill:
 
 ### Later
 
-- **M5 New programs:** start a program for a given processor, the way SIMPL's File > New does.
 - **M6 SIMPL+:** write and compile SIMPL+ modules through Crestron's own SIMPL+ compiler.
 - **M7 Touch panels:** check that a program's joins match its touch panel, and wire a panel's joins in bulk.
 - **M8 Debugger traces:** read saved SIMPL Debugger traces to explain what happened.
@@ -203,7 +203,7 @@ Optional environment variables:
 ## Development
 
 ```
-.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 167 tests (corpus tests need the local corpus)
+.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 172 tests (corpus tests need the local corpus)
 .venv\Scripts\python -m pytest                             # fast tests only
 .venv\Scripts\python -m ruff check .
 python -I tools/fetch_github_corpus.py    # download public sample programs (outside the repo)
