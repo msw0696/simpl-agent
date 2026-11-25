@@ -6,7 +6,7 @@ An [MCP](https://modelcontextprotocol.io) server that lets Claude read, check, e
 
 You ask in plain English ("why doesn't the projector turn off?", "what will SIMPL warn about?", "add a TSW-1070 at IP ID 03"). Claude answers by reading the real program through these tools. It doesn't guess from the raw text.
 
-> **Status (2026-11-24):** the first version (M0 to M3) is done and live-tested in SIMPL 4.32. Since then: placing macros and SIMPL+ modules, unattended compiling, and **M4 devices** (in progress). See the [roadmap](#roadmap).
+> **Status (2026-11-25):** M0 to M5 are done and checked against SIMPL 4.32's own saves and compiles: reading, checking, editing, devices and new programs. A real conference-room program built end to end compiled clean. **M6 SIMPL+** is under way: writing, compiling and placing SIMPL+ modules works end to end. See the [roadmap](#roadmap).
 >
 > This is a personal project, built for one programmer's own use. It is not a Crestron product and isn't affiliated with Crestron.
 
@@ -22,7 +22,7 @@ SIMPL Windows programs are large, flat graphs of symbols and signals. They're sa
 
 ## Tools
 
-24 tools. Every call is logged to `%LOCALAPPDATA%\SimplAgent\audit.jsonl`.
+25 tools. Every call is logged to `%LOCALAPPDATA%\SimplAgent\audit.jsonl`.
 
 | Group | Tool | What it does |
 |---|---|---|
@@ -49,13 +49,14 @@ SIMPL Windows programs are large, flat graphs of symbols and signals. They're sa
 | | `simpl_open` | Open a program in SIMPL without admin rights, so SIMPL Agent can save and reload it there |
 | | `simpl_save` | Save the program in SIMPL; edits then go ahead without asking, and SIMPL reloads them automatically |
 | Compile | `compile_program` | Compile in SIMPL Windows unattended and compare SIMPL's messages with `find_problems` |
-| | `splus_compile` | Compile a SIMPL+ module with Crestron's own SPlusCC (no window, no admin): errors and warnings per target, and whether the `.ush` was written |
+| SIMPL+ | `splus_reference` | Look up functions, declarations, directives, events and compiler errors in Crestron's SIMPL+ Language Reference (installed with SIMPL) |
+| | `splus_compile` | Compile a SIMPL+ module with Crestron's own SPlusCC (no window, no admin): errors and warnings per target with the help's explanation, and the pins SIMPL will show |
 
 **`apply_edits` operations:**
 - **Folders and logic:** `add_folder`, `add_symbol` (126 simple logic symbols proven in SIMPL 4.3x files), `move_symbol`, `remove_symbol`.
 - **Wiring and settings:** `connect` (or disconnect), `set_parameter`, `set_comment`, `rename_signal`, `rename_folder`. New signals are created when a pin names them.
 - **Modules:** `add_module` places a macro or SIMPL+ module, wired by pin name. Unused required pins go on SIMPL's `//__…_reserved__` placeholders.
-- **Devices:** `add_device` places a device at an IP ID or Cresnet ID the user chooses, or a card in a frame's slot; `remove_device` removes one with everything inside it; `wire_joins` connects a panel's or EISC's digital, analog and serial joins by number, growing its join lists as needed (see [M4](#m4-devices-in-progress)).
+- **Devices:** `add_device` places a device at an IP ID or Cresnet ID the user chooses, or a card in a frame's slot; `remove_device` removes one with everything inside it; `wire_joins` connects a panel's or EISC's digital, analog and serial joins by number, growing its join lists as needed (see [M4](#m4-devices--2026-11-24)).
 - **New programs:** `new_program` (a tool of its own) writes an empty program for a processor exactly as SIMPL's File > New does. SIMPL won't compile a program with a blank Program ID Tag, which File > New leaves blank; the `set_program_header` edit sets it (and the Program Name).
 - **Signal types:** a new signal takes its pin's type from the library (a Serial Send's `out$` gets a serial signal), and a signal of the wrong type is refused.
 
@@ -107,7 +108,7 @@ These are built into the tools and the skill:
 | Extras | Placing macros and SIMPL+ modules; unattended compiling | ✅ |
 | **M4** Devices | Device tree, free IDs, adding and removing devices, frames, cards, drivers, panel joins | ✅ Matches SIMPL 4.32's own saves |
 | **M5** New programs | Start a program from scratch | ✅ `new_program`: 13 processors proven identical to SIMPL's File > New (CP3, CP3N, CP4, CP4N, PRO3, PRO4, AV4, MC3, MC4, RMC3, RMC4, DIN-AP4, MPC3-302) |
-| **M6** SIMPL+ | Write and compile SIMPL+ modules | 🔨 `splus_compile` done |
+| **M6** SIMPL+ | Write, compile and place SIMPL+ modules | 🔨 Works end to end; `splus_reference`, `splus_compile` |
 | **M7** Touch panels | Check joins between program and panel | Later |
 | **M8** Debugger traces | Read saved Debugger traces | Later |
 
@@ -167,9 +168,18 @@ These are built into the tools and the skill:
 - **Handles:** new devices, symbols and their `Db`/`Et`/`Cm` records take the lowest unused handle, as SIMPL does after a delete.
 - **Not supported (refused with the reason):** IR drivers (they need an IR driver file from Crestron's database), one-way serial drivers on IR ports, devices whose symbols SIMPL marks incomplete until wired (Virtual Communication Port), and `new_program` for DMPS3, 2-Series and the Ethernet-only processor.
 
+### M6: SIMPL+ 🔨 (2026-11-25)
+
+- **Workflow:** look things up with `splus_reference`, write the `.usp` beside the program, `splus_compile` until clean, place it with `add_module`, then `compile_program`.
+- **`splus_reference`** searches Crestron's SIMPL+ Language Reference (`Simpl+lr.chm`, installed with SIMPL). On first use it is unpacked with Windows' `hh.exe` into SIMPL Agent's cache, never into this repo. It covers 526 pages: syntax, parameters, return values, examples, series support, and one page per compiler error. A `#CATEGORY` lookup also lists the category IDs.
+- **`splus_compile`** adds the help's explanation to each coded error. It returns the module's pins as SIMPL will show them, read from the `.ush` SPlusCC writes.
+  - **It converts the file to CRLF first.** SPlusCC drops everything after a `//` comment in a file with LF line endings, then reports a clean compile of an empty module. 71 of the 76 public modules checked for this needed the fix.
+- **Proof:** a feedback-parser module written for the conference-room program compiled with SPlusCC, was placed on COM 1's `rx$`, and compiled in SIMPL with 0 errors, warnings and notices. A fresh SIMPL re-saved the program byte for byte. All 156 public `.usp` files compiled in scratch copies: 113 compile, the failures I checked are SIMPL# libraries missing from their repos, and the parser accounts for every message SPlusCC counts.
+- **SIMPL keeps the module build it read first,** even after reloading the program. `compile_program` saves and restarts a SIMPL started with `simpl_open` if any of the program's `.ush` files is newer than that SIMPL. `simpl_open` waits until SIMPL has loaded the program, which took 68 s here.
+- **Not yet:** placing modules with parameter drop-down lists; checking what SIMPL does when a placed module's pins change.
+
 ### Later
 
-- **M6 SIMPL+:** write and compile SIMPL+ modules through Crestron's own SIMPL+ compiler.
 - **M7 Touch panels:** check that a program's joins match its touch panel, and wire a panel's joins in bulk.
 - **M8 Debugger traces:** read saved SIMPL Debugger traces to explain what happened.
 - **Probably never:** live signal watching. If it is ever built, it will be read-only.
