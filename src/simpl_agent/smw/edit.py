@@ -694,6 +694,12 @@ class Editor:
 
         return add_device(self, devlib, device, address, network)
 
+    def remove_device(self, devlib, device: str | int) -> list[str]:
+        """Remove a device and everything inside it, as SIMPL's Delete does; see device_edit.py."""
+        from .device_edit import remove_device
+
+        return remove_device(self, devlib, device)
+
     def add_folder(self, name: str, parent: str | int = "Logic") -> int:
         """Add an empty folder (subsystem) inside ``parent``, the way SIMPL 4.3x writes one."""
         if not name or name != name.strip() or "\\" in name or "\r" in name or "\n" in name or len(name) > MAX_NAME:

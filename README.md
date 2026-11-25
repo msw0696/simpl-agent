@@ -22,7 +22,7 @@ SIMPL Windows programs are large, flat graphs of symbols and signals. They're sa
 
 ## Tools
 
-19 tools. Every call is logged to `%LOCALAPPDATA%\SimplAgent\audit.jsonl`.
+20 tools. Every call is logged to `%LOCALAPPDATA%\SimplAgent\audit.jsonl`.
 
 | Group | Tool | What it does |
 |---|---|---|
@@ -39,6 +39,7 @@ SIMPL Windows programs are large, flat graphs of symbols and signals. They're sa
 | | `module_details` | A macro's (`.umc`/`.cmc`) or SIMPL+ module's pins, types and parameters |
 | Devices | `device_tree` | Every device: processor, cards, Ethernet and Cresnet devices, ports, addresses, IPs |
 | | `free_ids` | Free and used IP IDs and Cresnet IDs on each network |
+| | `find_library_devices` | Search SIMPL's device library; says where each device goes and whether `add_device` can place it |
 | Edit | `apply_edits` | One all-or-nothing batch of edits (below) |
 | History | `edit_history` | SIMPL Agent's changes to a program |
 | | `undo_last_edit` | Undo the last change, only while the file is exactly as that edit left it |
@@ -50,7 +51,7 @@ SIMPL Windows programs are large, flat graphs of symbols and signals. They're sa
 - **Folders and logic:** `add_folder`, `add_symbol` (126 simple logic symbols proven in SIMPL 4.3x files), `move_symbol`, `remove_symbol`.
 - **Wiring and settings:** `connect` (or disconnect), `set_parameter`, `set_comment`, `rename_signal`, `rename_folder`. New signals are created when a pin names them.
 - **Modules:** `add_module` places a macro or SIMPL+ module, wired by pin name. Unused required pins go on SIMPL's `//__…_reserved__` placeholders.
-- **Devices:** `add_device` places a device at an IP ID or Cresnet ID the user chooses (see [M4](#m4-devices-in-progress)).
+- **Devices:** `add_device` places a device at an IP ID or Cresnet ID the user chooses, or a card in a frame's slot; `remove_device` removes one with everything inside it (see [M4](#m4-devices-in-progress)).
 
 Every result carries a `revision`. SIMPL can renumber handles when it saves, so tools re-read after a save and never reuse old handles.
 
@@ -202,7 +203,7 @@ Optional environment variables:
 ## Development
 
 ```
-.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 164 tests (corpus tests need the local corpus)
+.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 167 tests (corpus tests need the local corpus)
 .venv\Scripts\python -m pytest                             # fast tests only
 .venv\Scripts\python -m ruff check .
 python -I tools/fetch_github_corpus.py    # download public sample programs (outside the repo)

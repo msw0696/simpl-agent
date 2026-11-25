@@ -259,3 +259,29 @@ def test_matches_simpls_frame_saves(libs, start, steps, want) -> None:
     for dev, ad, net in steps:
         ed.add_device(libs[1], dev, ad, network=net)
     assert same_except_name(ed.raw.to_bytes(), (DATA / want).read_bytes())
+
+
+@pytest.mark.parametrize("start,device,want", [
+    ("frames-step4.smw", "TSW-770", "frames-step5.smw"),      # a panel on an IP ID
+    ("frames-step5.smw", "DMC-4KZ-C", "frames-step6.smw"),    # a card in a frame's slot
+])
+def test_remove_device_matches_simpls_delete(libs, start, device, want) -> None:
+    if not (DATA / want).exists():
+        pytest.skip("round 8 saves not copied here")
+    ed = editor(libs, start)
+    removed = ed.remove_device(libs[1], device)
+    assert removed[0] == device and "FixedSlot" not in removed
+    assert same_except_name(ed.raw.to_bytes(), (DATA / want).read_bytes())
+
+
+def test_remove_device_refuses_built_in_parts(libs) -> None:
+    ed = editor(libs)
+    ed.add_device(libs[1], "TSW-1070", "03")
+    before = ed.raw.to_bytes()
+    with pytest.raises(EditError, match="built-in part"):
+        ed.remove_device(libs[1], "TSW-1070 Buttons")
+    with pytest.raises(EditError, match="can.t be removed"):
+        ed.remove_device(libs[1], "#2")
+    assert ed.raw.to_bytes() == before
+    ed.remove_device(libs[1], "TSW-1070")
+    assert same_except_name(ed.raw.to_bytes(), (DATA / "dev-step0.smw").read_bytes())

@@ -783,6 +783,7 @@ def create_server(tools: Tools | None = None) -> Any:
                  "connect {pin name: signal}, parameters [...] or {name: value}, comment?, new_signal_type?}; "
                  "add_device {device (exact name or code), address (IP ID the user chose, e.g. '03', or a "
                  "frame's slot number), network? (or the frame '#handle' for a card)} (see free_ids); "
+                 "remove_device {device ('#handle' from device_tree)}; "
                  "rename_signal {signal, new_name}; rename_folder {folder, "
                  "new_name}; remove_symbol {symbol}; move_symbol {symbol, folder}. New signal names are "
                  "created. Returns changes, new problems and next_step. dry_run=true checks without writing.")

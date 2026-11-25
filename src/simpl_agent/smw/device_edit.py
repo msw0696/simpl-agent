@@ -641,3 +641,110 @@ def add_device(ed: Editor, devlib: DeviceLibrary, device: str | int, address: st
     ed.log.add(f"added {dd.name} at {slot.name} {addr} on {container.name}: device #{dev_h}, symbol #{sm_h}"
                + (f" (+{b.devices - 1} devices inside it)" if b.devices > 1 else ""))
     return sm_h
+
+
+def find_placed_device(ed: Editor, ref: str | int) -> Device:
+    """A device in the program by '#handle' (from device_tree) or by its name if that's unique."""
+    from .edit import EditError
+
+    text = str(ref).strip()
+    if text.lstrip("#").isdigit():
+        d = ed.prog.devices.get(int(text.lstrip("#")))
+        if d is None or d.record.get("DvF") == "Sl":
+            raise EditError(f"no device #{text.lstrip('#')}; use the handle device_tree shows")
+        return d
+    hits = [d for d in _unique_devices(ed) if d.record.get("DvF") != "Sl" and (d.name or "").lower() == text.lower()]
+    if len(hits) != 1:
+        raise EditError(f"{len(hits)} devices named {ref!r}; use the '#handle' device_tree shows")
+    return hits[0]
+
+
+def remove_device(ed: Editor, devlib: DeviceLibrary, ref: str | int) -> list[str]:
+    """Remove a device the way SIMPL's Delete does (f12-round8 step 5): its whole subtree, its Db/Et/Cm
+    records and symbols; the slot it sat in goes back into the free record of its type. Signals nothing
+    uses any more are removed too. Returns the removed device names."""
+    from .edit import EditError
+
+    d = find_placed_device(ed, ref)
+    slot = ed.prog.devices.get(d.parent) if d.parent is not None else None
+    if slot is None or slot.record.get("DvF") != "Sl":
+        raise EditError(f"{d.name} isn't in a slot; it can't be removed")
+    owner = ed.prog.devices.get(slot.parent) if slot.parent is not None else None
+    odd = devlib.get(owner.code) if owner is not None and owner.code is not None else None
+    if slot.name not in PROVEN_SLOTS:
+        pos = int(slot.address) if (slot.address or "").isdigit() else None
+        if odd is None or pos is None or built_in_by_fixed(odd, pos):
+            raise EditError(f"{d.name} is a built-in part of {owner.name if owner else '?'}; it can't be removed")
+    hd = ed.prog.header
+    if hd is not None and hd.get("CnH") == str(d.handles[0]):
+        raise EditError("the processor can't be removed")
+
+    # Everything in the subtree.
+    sub, todo, seen = [], [d], set()
+    while todo:
+        x = todo.pop()
+        if id(x) in seen:
+            continue
+        seen.add(id(x))
+        sub.append(x)
+        todo += [ed.prog.devices[h] for h in dict.fromkeys(x.children) if h in ed.prog.devices]
+    sub_ids = {id(x.record) for x in sub}
+    companions = {(t, x.record.get(k)) for x in sub for k, t in (("DbH", "Db"), ("EtH", "Et"), ("CmH", "Cm"),
+                                                                    ("CsH", "Cs"), ("VtpH", "VTP")) if x.record.get(k)}
+    sym_handles = {x.symbol for x in sub if x.symbol is not None and x.symbol in ed.prog.symbols}
+    sym_recs = {id(ed.prog.symbols[h].record) for h in sym_handles}
+    touched = set()
+    for h in sym_handles:
+        sm = ed.prog.symbols[h]
+        touched |= set(sm.inputs.values()) | set(sm.outputs.values())
+    top_sym = d.symbol if d.symbol in ed.prog.symbols else None
+    parent_sym = ed.prog.symbols[top_sym].parent if top_sym is not None else None
+
+    snapshot = ed._snapshot()
+    try:
+        # 1. The slot goes back into the free record of its type under the same owner.
+        rec = slot.record
+        rec.delete("mC")
+        rec.lines = [(k, v) for k, v in rec.lines if not (k and k[0] == "C" and k[1:].isdigit())]
+        free = None
+        for h in dict.fromkeys(owner.children if owner is not None else []):
+            k = ed.prog.devices.get(h)
+            if (k is not None and k is not slot and k.record.get("DvF") == "Sl" and k.name == slot.name
+                    and not k.children and len(parse_handles(k.record.get("H"))) < MAX_SLOTS_PER_RECORD):
+                free = k
+                break
+        if free is not None:
+            pairs = list(zip(parse_handles(free.record.get("H")), (free.address or "").split(","), strict=True))
+            pairs += list(zip(parse_handles(rec.get("H")), (rec.get("Ad") or "").split(","), strict=True))
+            pairs.sort()
+            rec.set("H", format_handles([h for h, _ in pairs]))
+            rec.set("Ad", ",".join(a for _, a in pairs))
+            ed.raw.items.remove(free.record)
+            ed.raw.items.remove(rec)
+            _insert_dv_sorted(ed, rec)
+
+        # 2. The subtree's records, companions and symbols.
+        ed.raw.items = [it for it in ed.raw.items if not (
+            isinstance(it, Record) and (id(it) in sub_ids or id(it) in sym_recs
+                                        or (it.type, it.get("H")) in companions))]
+        ed._reload()
+        if parent_sym is not None and parent_sym in ed.prog.symbols:
+            ed._rebuild_children(parent_sym, [c for c in ed.prog.symbols[parent_sym].children if c != top_sym])
+
+        # 3. Signals nothing uses any more (SIMPL doesn't keep unused signals).
+        ed._reload()
+        used = {h for o in ed.prog.symbols.values() for h in list(o.inputs.values()) + list(o.outputs.values())}
+        builtin = set(ed.prog.builtin_signals.values())
+        gone = [h for h in touched if h not in used and h not in builtin and h in ed.prog.signals
+                and ed.prog.signals[h].record is not None]
+        names = [ed.prog.signals[h].name for h in sorted(gone)]
+        drop = {id(ed.prog.signals[h].record) for h in gone}
+        ed.raw.items = [it for it in ed.raw.items if id(it) not in drop]
+    except Exception:
+        ed._restore(snapshot)
+        raise
+    ed._reload()
+    ed.log.add(f"removed device {d.name} #{d.handles[0]} at {slot.name} {slot.address}"
+               + (f" (with {n_inside} devices inside it)" if (n_inside := sum(1 for x in sub[1:] if x.record.get("DvF") != "Sl")) else "")
+               + (f" and unused signals {names}" if names else ""))
+    return [x.name or "?" for x in sub if x.record.get("DvF") != "Sl"]
