@@ -20,6 +20,7 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import json
+import subprocess
 import sys
 import threading
 import time
@@ -55,6 +56,7 @@ TOOL_NAMES = (
     "folder_tree", "list_folder", "show_symbol", "find_signals", "follow_signal", "find_problems",
     "apply_edits", "edit_history", "undo_last_edit", "restore_version", "wait_for_simpl_save",
     "module_details", "compile_program", "device_tree", "free_ids", "find_library_devices", "new_program",
+    "splus_compile",
 )
 PROGRAM_EXTS = {".smw", ".umc", ".cmc"}
 KNOWN_SIGNATURES = {"SimplWindow": "program", "CresMacro": "macro", "UserMacro": "macro"}
@@ -642,6 +644,30 @@ class Tools(EditTools):
                 "note": "Written the way SIMPL's File > New does. Open it in SIMPL, or add devices and logic with "
                         "apply_edits using this revision."}
 
+    def splus_compile(self, path: str, targets: list[str] | None = None, timeout_s: int = 600) -> dict[str, Any]:
+        """Compile a SIMPL+ module (.usp) with Crestron's SPlusCC; writes its .ush beside it."""
+        from .splus import SPLUSCC, TARGETS, compile_module
+
+        p = Path(path)
+        if p.suffix.lower() != ".usp" or not p.is_file():
+            raise ToolError("give the full path of an existing SIMPL+ module (.usp)")
+        tg = [t.strip().lower() for t in (targets or ["series4"])]
+        bad = [t for t in tg if t not in TARGETS]
+        if bad or not tg:
+            raise ToolError(f"targets must be some of {list(TARGETS)} (got {bad or tg})")
+        if not SPLUSCC.exists():
+            raise ToolError(f"SIMPL+ compiler not found at {SPLUSCC}")
+        try:
+            res = compile_module(p, tg, timeout_s=max(30, min(int(timeout_s), 1800)))
+        except subprocess.TimeoutExpired:
+            raise ToolError("the SIMPL+ compiler took too long") from None
+        except RuntimeError as e:
+            raise ToolError(str(e)) from None
+        res["path"] = str(p)
+        res["note"] = ("Compiled locally with Crestron's SPlusCC; nothing was sent to a processor. If the module is "
+                       "placed in a program, compile the program too (compile_program).")
+        return res
+
     def device_tree(self, path: str, limit: int = 300) -> dict[str, Any]:
         from . import devices as dv
 
@@ -889,6 +915,13 @@ def create_server(tools: Tools | None = None) -> Any:
                  "apply_edits (add_device, add_folder, add_symbol ...) with the returned revision.")
     async def new_program(path: str, processor: str, system_name: str = "") -> dict[str, Any]:
         return await _run("new_program", path=path, processor=processor, system_name=system_name)
+
+    @server.tool(name="splus_compile", description="Compile a SIMPL+ module (.usp) with Crestron's own "
+                 "command-line compiler (no window, no admin), for targets series3 and/or series4 (default "
+                 "series4). Returns errors and warnings with line numbers, per target, and whether the .ush "
+                 "header was written. Local only; never touches a processor.")
+    async def splus_compile(path: str, targets: list[str] | None = None, timeout_s: int = 600) -> dict[str, Any]:
+        return await _run("splus_compile", path=path, targets=targets, timeout_s=timeout_s)
 
     @server.tool(name="free_ids", description="Free and used IDs on each of the program's networks (Ethernet "
                  "IP IDs, Cresnet IDs, ports). network filters by name or transport, e.g. 'Ethernet'. Read-only; "

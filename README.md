@@ -22,7 +22,7 @@ SIMPL Windows programs are large, flat graphs of symbols and signals. They're sa
 
 ## Tools
 
-21 tools. Every call is logged to `%LOCALAPPDATA%\SimplAgent\audit.jsonl`.
+22 tools. Every call is logged to `%LOCALAPPDATA%\SimplAgent\audit.jsonl`.
 
 | Group | Tool | What it does |
 |---|---|---|
@@ -47,6 +47,7 @@ SIMPL Windows programs are large, flat graphs of symbols and signals. They're sa
 | | `restore_version` | Go back to before any change, with a preview of what would be lost |
 | Live | `wait_for_simpl_save` | Wait for the user to save in SIMPL |
 | Compile | `compile_program` | Compile in SIMPL Windows unattended and compare SIMPL's messages with `find_problems` |
+| | `splus_compile` | Compile a SIMPL+ module with Crestron's own SPlusCC (no window, no admin): errors and warnings per target, and whether the `.ush` was written |
 
 **`apply_edits` operations:**
 - **Folders and logic:** `add_folder`, `add_symbol` (126 simple logic symbols proven in SIMPL 4.3x files), `move_symbol`, `remove_symbol`.
@@ -103,7 +104,7 @@ These are built into the tools and the skill:
 | Extras | Placing macros and SIMPL+ modules; unattended compiling | ✅ |
 | **M4** Devices | Device tree, free IDs, adding devices and frames | 🔨 In progress |
 | **M5** New programs | Start a program from scratch | ✅ `new_program`: 13 processors proven identical to SIMPL's File > New (CP3, CP3N, CP4, CP4N, PRO3, PRO4, AV4, MC3, MC4, RMC3, RMC4, DIN-AP4, MPC3-302) |
-| **M6** SIMPL+ | Write and compile SIMPL+ modules | Later |
+| **M6** SIMPL+ | Write and compile SIMPL+ modules | 🔨 `splus_compile` done |
 | **M7** Touch panels | Check joins between program and panel | Later |
 | **M8** Debugger traces | Read saved Debugger traces | Later |
 
@@ -205,7 +206,7 @@ Optional environment variables:
 ## Development
 
 ```
-.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 184 tests (corpus tests need the local corpus)
+.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 186 tests (corpus tests need the local corpus)
 .venv\Scripts\python -m pytest                             # fast tests only
 .venv\Scripts\python -m ruff check .
 python -I tools/fetch_github_corpus.py    # download public sample programs (outside the repo)
@@ -224,7 +225,7 @@ Some device tests compare against SIMPL's own saves. Those files are real SIMPL 
 | `src/simpl_agent/checks.py` | Structural rules for the write gate |
 | `src/simpl_agent/devices.py` | `device_tree` and `free_ids` |
 | `src/simpl_agent/edit_tools.py`, `history.py` | `apply_edits`, the write gate, history, undo and restore |
-| `src/simpl_agent/compile.py` | `compile_program` |
+| `src/simpl_agent/compile.py`, `splus.py` | `compile_program`, `splus_compile` |
 | `src/simpl_agent/server.py` | The MCP server and audit log |
 | `tools/` | Corpus download, format measurements, device proofs and slot rules (`build_slot_rules.py`), `simpl_gui.py` (drives SIMPL's window for proof rounds), SIMPL test-file builders, compile task setup |
 | `docs/format.md` | Everything measured about the file format, and every SIMPL 4.32 result |
