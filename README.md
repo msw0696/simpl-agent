@@ -22,7 +22,7 @@ SIMPL Windows programs are large, flat graphs of symbols and signals. They're sa
 
 ## Tools
 
-22 tools. Every call is logged to `%LOCALAPPDATA%\SimplAgent\audit.jsonl`.
+24 tools. Every call is logged to `%LOCALAPPDATA%\SimplAgent\audit.jsonl`.
 
 | Group | Tool | What it does |
 |---|---|---|
@@ -46,6 +46,8 @@ SIMPL Windows programs are large, flat graphs of symbols and signals. They're sa
 | | `undo_last_edit` | Undo the last change, only while the file is exactly as that edit left it |
 | | `restore_version` | Go back to before any change, with a preview of what would be lost |
 | Live | `wait_for_simpl_save` | Wait for the user to save in SIMPL |
+| | `simpl_open` | Open a program in SIMPL without admin rights, so SIMPL Agent can save and reload it there |
+| | `simpl_save` | Save the program in SIMPL; edits then go ahead without asking, and SIMPL reloads them automatically |
 | Compile | `compile_program` | Compile in SIMPL Windows unattended and compare SIMPL's messages with `find_problems` |
 | | `splus_compile` | Compile a SIMPL+ module with Crestron's own SPlusCC (no window, no admin): errors and warnings per target, and whether the `.ush` was written |
 
@@ -135,7 +137,8 @@ These are built into the tools and the skill:
 
 - **`apply_edits`** with the write gate above and `dry_run`.
 - **History:** every edit is backed up in `.simpl-agent/` next to the program (SIMPL's archive skips that folder). `edit_history`, `undo_last_edit` and `restore_version`.
-- **Live workflow with SIMPL open:** SIMPL runs as administrator, so SIMPL Agent can't press Save or Reload in it. The user saves first; after the write SIMPL offers to reload and the user clicks Yes. `wait_for_simpl_save` watches the file.
+- **Live workflow with SIMPL open:** when SIMPL runs as administrator (its default), SIMPL Agent can't press Save or Reload in it: the user saves first, and after the write SIMPL offers to reload and the user clicks Yes. `wait_for_simpl_save` watches the file.
+- **Live link (2026-11-24):** opened with `simpl_open`, SIMPL runs without admin rights and takes plain window messages, even with the screen locked. `simpl_save` saves the program there (File > Save by its menu command), `apply_edits` accepts that revision, and after the write SIMPL Agent makes SIMPL check the file and answers its reload prompt. Checked end to end: SIMPL's next save was byte-identical to SIMPL Agent's write.
 - **Live tests:** SIMPL reloaded and compiled exactly as predicted, and its re-save was byte-for-byte what SIMPL Agent wrote. On the real classroom program, an edit (a new folder, an OR, a changed pulse time) compiled with exactly the one predicted notice.
 
 ### Modules and automatic compiling ✅
@@ -206,7 +209,7 @@ Optional environment variables:
 ## Development
 
 ```
-.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 186 tests (corpus tests need the local corpus)
+.venv\Scripts\python -m pytest -m "corpus or not corpus"   # all 188 tests (corpus tests need the local corpus)
 .venv\Scripts\python -m pytest                             # fast tests only
 .venv\Scripts\python -m ruff check .
 python -I tools/fetch_github_corpus.py    # download public sample programs (outside the repo)
@@ -226,6 +229,7 @@ Some device tests compare against SIMPL's own saves. Those files are real SIMPL 
 | `src/simpl_agent/devices.py` | `device_tree` and `free_ids` |
 | `src/simpl_agent/edit_tools.py`, `history.py` | `apply_edits`, the write gate, history, undo and restore |
 | `src/simpl_agent/compile.py`, `splus.py` | `compile_program`, `splus_compile` |
+| `src/simpl_agent/live.py` | The live link: `simpl_open`, `simpl_save`, automatic reload |
 | `src/simpl_agent/server.py` | The MCP server and audit log |
 | `tools/` | Corpus download, format measurements, device proofs and slot rules (`build_slot_rules.py`), `simpl_gui.py` (drives SIMPL's window for proof rounds), SIMPL test-file builders, compile task setup |
 | `docs/format.md` | Everything measured about the file format, and every SIMPL 4.32 result |

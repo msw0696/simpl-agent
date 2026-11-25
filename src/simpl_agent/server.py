@@ -56,7 +56,7 @@ TOOL_NAMES = (
     "folder_tree", "list_folder", "show_symbol", "find_signals", "follow_signal", "find_problems",
     "apply_edits", "edit_history", "undo_last_edit", "restore_version", "wait_for_simpl_save",
     "module_details", "compile_program", "device_tree", "free_ids", "find_library_devices", "new_program",
-    "splus_compile",
+    "splus_compile", "simpl_save", "simpl_open",
 )
 PROGRAM_EXTS = {".smw", ".umc", ".cmc"}
 KNOWN_SIGNATURES = {"SimplWindow": "program", "CresMacro": "macro", "UserMacro": "macro"}
@@ -134,6 +134,10 @@ class Tools(EditTools):
         self._lock = threading.Lock()
         self.verified = load_verified_codes() or set()
         self.windows = simpl_windows  # replaceable in tests
+        from . import live
+
+        self.live = live  # replaceable in tests
+        self._live_saved: dict[str, str] = {}  # program -> revision right after simpl_save
 
     # ------------------------------------------------------------ plumbing
     def index(self) -> LibraryIndex:
@@ -668,6 +672,36 @@ class Tools(EditTools):
                        "placed in a program, compile the program too (compile_program).")
         return res
 
+    def simpl_save(self, path: str) -> dict[str, Any]:
+        """Save the program in SIMPL (File > Save), when SIMPL runs without admin rights."""
+        p = Path(path)
+        st = self.live.status(p)
+        if not st.get("open"):
+            raise ToolError("SIMPL doesn't have this program open")
+        if not st.get("controllable"):
+            raise ToolError("SIMPL is running as administrator, so SIMPL Agent can't save in it. Ask the user to "
+                            "save (Ctrl+S) and confirm, or to close SIMPL and reopen the program with simpl_open.")
+        if not self.live.save(p):
+            raise ToolError("SIMPL didn't save the program (a dialog may be open in SIMPL)")
+        rev = hashlib.sha256(p.read_bytes()).hexdigest()
+        self._live_saved[self._key(p)] = rev
+        return {"path": str(p), "saved": True, "revision": rev,
+                "note": "Saved in SIMPL. Read the program again if needed, then edit with this revision; "
+                        "SIMPL Agent reloads SIMPL after the edit."}
+
+    def simpl_open(self, path: str) -> dict[str, Any]:
+        """Open a program in SIMPL without admin rights, so SIMPL Agent can save and reload it there."""
+        p = Path(path)
+        if p.suffix.lower() != ".smw" or not p.is_file():
+            raise ToolError("give the full path of an existing .smw program")
+        st = self.live.status(p)
+        if st.get("open"):
+            return {"path": str(p), "already_open": True, "controllable": st.get("controllable")}
+        pid = self.live.launch(p)
+        return {"path": str(p), "started": True, "pid": pid,
+                "note": "SIMPL is starting (about 15 s) without admin rights; it can then be saved and reloaded "
+                        "by SIMPL Agent. Compiling with compile_program still needs SIMPL closed."}
+
     def device_tree(self, path: str, limit: int = 300) -> dict[str, Any]:
         from . import devices as dv
 
@@ -922,6 +956,18 @@ def create_server(tools: Tools | None = None) -> Any:
                  "header was written. Local only; never touches a processor.")
     async def splus_compile(path: str, targets: list[str] | None = None, timeout_s: int = 600) -> dict[str, Any]:
         return await _run("splus_compile", path=path, targets=targets, timeout_s=timeout_s)
+
+    @server.tool(name="simpl_save", description="Save the program SIMPL has open (File > Save), so it can be "
+                 "edited safely. Only works when SIMPL was started without admin rights (simpl_open); then "
+                 "apply_edits accepts the returned revision instead of user_confirmed_saved, and SIMPL Agent "
+                 "makes SIMPL reload the edit itself.")
+    async def simpl_save(path: str) -> dict[str, Any]:
+        return await _run("simpl_save", path=path)
+
+    @server.tool(name="simpl_open", description="Open a program in SIMPL Windows without admin rights, so SIMPL "
+                 "Agent can save it there (simpl_save) and reload it after edits. Doesn't touch a processor.")
+    async def simpl_open(path: str) -> dict[str, Any]:
+        return await _run("simpl_open", path=path)
 
     @server.tool(name="free_ids", description="Free and used IDs on each of the program's networks (Ethernet "
                  "IP IDs, Cresnet IDs, ports). network filters by name or transport, e.g. 'Ethernet'. Read-only; "

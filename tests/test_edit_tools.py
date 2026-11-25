@@ -170,3 +170,62 @@ def test_wait_for_simpl_save(setup) -> None:
     p.write_bytes(p.read_bytes().replace(b"Nm=room_level", b"Nm=room_lvl"))
     r = call(t, "wait_for_simpl_save", path=str(p), revision=old, timeout_s=1)
     assert r["saved"] is True and r["revision"] == rev(p)
+
+
+class FakeLive:
+    """Stands in for simpl_agent.live: a SIMPL without admin rights that has the program open."""
+
+    def __init__(self, controllable: bool = True) -> None:
+        self.controllable, self.saved, self.reloaded = controllable, 0, 0
+
+    def status(self, p):
+        return {"open": True, "controllable": self.controllable}
+
+    def save(self, p):
+        self.saved += 1
+        return True
+
+    def reload(self, p):
+        self.reloaded += 1
+        return True
+
+
+def test_live_link_saves_then_reloads(tmp_path: Path, tiny: bytes) -> None:
+    from simpl_agent.server import Tools
+
+    p = tmp_path / "room.smw"
+    p.write_bytes(tiny.replace(b"Sgntr=SimplWindow", b"Sgntr=SimplWindow\r\nRelVrs=4.32.02"))
+    t = Tools(home=tmp_path / "home")
+    from simpl_agent.catalog.index import load_index
+    from simpl_agent.catalog.symlib import DEFAULT_SYMLIB
+
+    if not DEFAULT_SYMLIB.exists():
+        pytest.skip("SIMPL's symbol library isn't installed")
+    t._index = load_index()
+    t.windows = lambda: [f"SIMPL Windows - room.smw ( {p})"]
+    t.live = FakeLive()
+    rev = t.call("describe_program", {"path": str(p)})["revision"]
+    refused = t.call("apply_edits", {"path": str(p), "revision": rev, "summary": "x",
+                                     "edits": [{"op": "rename_signal", "signal": "room_enable", "new_name": "room_on"}]})
+    assert not refused["ok"] and "simpl_save" in refused["error"]
+    saved = t.call("simpl_save", {"path": str(p)})
+    assert saved["ok"] and t.live.saved == 1
+    r = t.call("apply_edits", {"path": str(p), "revision": saved["revision"], "summary": "x",
+                               "edits": [{"op": "rename_signal", "signal": "room_enable", "new_name": "room_on"}]})
+    assert r["ok"] and t.live.reloaded == 1 and "reloaded" in r["next_step"], r
+    # The saved revision is used up: the next edit needs a new save (or the user's confirmation).
+    again = t.call("apply_edits", {"path": str(p), "revision": r["revision"], "summary": "y",
+                                   "edits": [{"op": "rename_signal", "signal": "room_on", "new_name": "room_go"}]})
+    assert not again["ok"]
+
+
+def test_elevated_simpl_keeps_the_manual_workflow(tmp_path: Path, tiny: bytes) -> None:
+    from simpl_agent.server import Tools
+
+    p = tmp_path / "room.smw"
+    p.write_bytes(tiny)
+    t = Tools(library_path=tmp_path / "missing.tio", home=tmp_path / "home")
+    t.windows = lambda: [f"SIMPL Windows - room.smw ( {p})"]
+    t.live = FakeLive(controllable=False)
+    r = t.call("simpl_save", {"path": str(p)})
+    assert not r["ok"] and "administrator" in r["error"]

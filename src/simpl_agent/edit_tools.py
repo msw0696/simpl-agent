@@ -87,11 +87,16 @@ class EditTools:
         if not revision or sha256(data) != revision:
             raise ToolError("the file has changed since you read it (revision mismatch). Read it again "
                             "(describe_program) and use the new revision; SIMPL may have renumbered symbols.")
-        if self._open_in_simpl(p) and not user_confirmed_saved:
+        if self._open_in_simpl(p) and not user_confirmed_saved and self._live_saved.get(self._key(p)) != revision:
+            if self.live.status(p).get("controllable"):
+                raise ToolError("SIMPL has this program open. Call simpl_save first (it saves the program in SIMPL "
+                                "and returns the new revision), then use that revision. SIMPL Agent reloads SIMPL "
+                                "after the edit itself.")
             raise ToolError("SIMPL has this program open. Ask the user to save it in SIMPL (Ctrl+S) and "
                             "confirm; then read it again and call with user_confirmed_saved=true. (SIMPL Agent "
                             "can't see unsaved changes in SIMPL, and SIMPL's reload after the edit would "
-                            "discard them.)")
+                            "discard them. If SIMPL is started with simpl_open, SIMPL Agent can save and reload "
+                            "it itself.)")
         if p.exists() and not (p.stat().st_mode & 0o200):
             raise ToolError(f"{p.name} is read-only")
         return p, data, prog
@@ -162,8 +167,16 @@ class EditTools:
         elif op == "move_symbol":
             ed.move_symbol(e["symbol"], e["folder"])
 
+    @staticmethod
+    def _key(p: Path) -> str:
+        return str(Path(p).resolve()).lower()
+
     def _after_write_note(self, p: Path) -> str:
+        self._live_saved.pop(self._key(p), None)
         if self._open_in_simpl(p):
+            if self.live.status(p).get("controllable") and self.live.reload(p):
+                return ("SIMPL reloaded the edit itself (it's open without admin rights, so SIMPL Agent answered "
+                        "its reload prompt). Tell the user it's in SIMPL now; compile with F12 there.")
             return ("Tell the user: switch to SIMPL; it will say the file changed and offer to reload. "
                     "Click Yes, then compile (F12). Saving in SIMPL without reloading would overwrite "
                     "this edit.")
