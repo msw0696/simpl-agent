@@ -36,11 +36,10 @@ Page titles are cited; nothing is copied from the help. SIMPL's behaviour was ch
 ## Gaps: what SIMPL reports that SIMPL Agent doesn't predict
 Ordered by how useful a prediction would be.
 
-1. **Parameter values** (Compiler Errors 105–108, 125):
-   - escape-sequence mistakes in string parameters (`\x` with one hex digit, a lone `\` at the end, invalid `\` codes);
-   - analog values beyond 65535, 100%, FFFFh or 582s.
-
-   `set_parameter` and `add_symbol` take any one-line value today. **Recommendation:** validate parameter values with the same rules. The 2026-11-25 drop-down test hit 107 and 236 from a backslash, so this is real.
+1. **Parameter values** (Compiler Errors 105–108, 125). **Done 2026-11-27** (docs/format.md "Parameter values"):
+   - Escape mistakes (105, 106, 107, 125, and 236 for `\u`) are refused by every edit that sets a value and reported by `find_problems`. No value in the 380 public programs breaks the rules.
+   - Numeric parameters must be in one of the forms SIMPL uses (`SA-PARAM-FORM`).
+   - **Ranges (108) aren't checked:** the help's flat limits are contradicted by real programs (Numeric Keypad `99999d`, Oscillator `655.35s`, Retriggerable One Shot `660s`), and which parameters are single precision isn't in the library fields read.
 2. **Incomplete symbols** (160; Make Symbol Complete): SIMPL refuses to compile, and only reports the symbol once it has saved it (`CF=1`). `find_problems` reports `CF=1` already in the file (`SA-INCOMPLETE`), and SIMPL Agent's own edits never leave pins empty. But it can't predict completeness for symbols edited elsewhere. **Recommendation:** a completeness check (list completeness, brackets optional, Buffer pairs) to name the symbol before SIMPL does.
 3. **Module messages** (124, 126, 127, 135, 213): undefined module inputs, signals inside a macro with no source or destination, "module re-sync required", and "symbol definition changed since saved". `SA-MODULE-CHANGED` covers part of 135 and 213 for SIMPL+. Signals inside macros (126/127) are never predicted. **Recommendation:** predict 126/127 by applying the 102/103 rules inside each placed macro; the macro's file is already read for pin names.
 4. **Capacity** (130–133): too many digital or analog signals, or too much NVRAM or program size, for the processor. That needs per-processor limits, which the help doesn't give. **Not recommended** without a source for the limits.

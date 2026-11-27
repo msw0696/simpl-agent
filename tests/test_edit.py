@@ -16,7 +16,7 @@ def fake_library() -> SymbolLibrary:
                         "MaxVariableOutputs": "4000", "Expand": "expand_inputs_with_outputs",
                         "SymJam": "NonExclusive"}),
         9: ("One Shot", {"Smpl-C": "1", "DeviceCode": "0", "NumFixedInputs": "3", "NumFixedOutputs": "2",
-                         "NumFixedParams": "1", "ParamCue1": "pulse_time"}),
+                         "NumFixedParams": "1", "ParamCue1": "pulse_time", "ParamSigType1": "Time"}),
         999: ("Some Device", {"Smpl-C": "17", "DeviceCode": "42"}),
         89: ("Serial Send", {"Smpl-C": "1", "DeviceCode": "0", "NumFixedInputs": "1", "NumFixedOutputs": "1",
                              "NumFixedParams": "1", "OutputSigType1": "Serial", "ParamSigType1": "String"}),

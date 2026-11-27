@@ -378,3 +378,14 @@ A module written for the conference-room test program (`DisplayFeedback.usp`: `B
   - All 207 that match fit their definition's pin counts.
   - The files came from the programs' own GitHub repos (`tools/fetch_panel_files.py`), saved beside the corpus copies.
 - **Open:** SIMPL compiled a public program with a Smart Graphics XPanel (LibraryProgram) with 40 warnings and 42 notices that `find_problems` doesn't predict. A re-test from a fresh copy, with and without its `.sgd`, stopped at "Incomplete Symbols" instead, and `find_problems` sees nothing incomplete. Corpus copies keep git's LF line endings, which SIMPL rejects with a bare "File Error" until they're converted to CRLF.
+
+## Parameter values (2026-11-27)
+- **Source:** SIMPL's help, Compiler Errors 105-108 and 125, checked against every placed parameter value in the 380 public programs (`tests/test_params.py`, corpus test).
+- **Escapes:** SIMPL reads every backslash in a parameter as an escape: `\a \b \f \n \r \t \v \\` and `\x` with exactly two hex digits.
+  - Wrong forms: `\x` cut off by the end of the value (105), any other `\` code (106), a lone `\` at the end (107), `\x` with fewer than two hex digits (125). `\u` drew warning LGCMCVT236 in SIMPL 4.32.
+  - The corpus uses only `\xHH` (5,735), `\n`, `\r` and `\\`, and no value breaks the rules.
+  - It applies to SIMPL+ string parameters too (`\\USER\\` in a public program; `\user\` drew 236 and 107 live).
+- **The parameter's type** is `ParamSigType<n>`, else the nearest one before it (a variable parameter list shares the first's type). `UI_RO_String` is device text SIMPL writes, so it isn't checked.
+- **Numeric types** (`Constant`, `Percent`, `Time`, `HexAddress`): every corpus value is one of `10d`, `-5d`, `0`, `50%`, `0.25%`, `2s`, `.01s`, `1t`, `1Fh`, `'2'` or a long time `07.50.00.00s` / `5.00.00s` (units in either case).
+- **Ranges aren't checked:** the help's single-precision limits (65535, 100%, FFFFh, 582s) don't hold for every symbol. The corpus has Numeric Keypad `99999d`, Hosted BACnet Device `562036d`, Oscillator `655.35s` and Retriggerable One Shot `660s`. Which parameters are single precision isn't in the library fields SIMPL Agent reads.
+- **What SIMPL Agent does:** `add_symbol`, `add_module`, `add_device` and `set_parameter` refuse a bad value, naming SIMPL's code. `find_problems` reports existing ones (`LGCMCVT105`-`107`, `125`, `236`, and `SA-PARAM-FORM` for a numeric value in no known form).

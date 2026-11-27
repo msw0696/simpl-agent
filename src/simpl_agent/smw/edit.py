@@ -35,6 +35,19 @@ class EditError(ValueError):
     """An edit that can't be applied. Nothing has been changed when this is raised."""
 
 
+def check_parameter_value(d: LibSymbol | None, n: int, value: str, who: str) -> None:
+    """Refuse a parameter value SIMPL would reject or misread (SIMPL help: Compiler Errors 105-107,
+    125; docs/format.md "Parameter values"). ``d`` is the symbol's definition, for its type."""
+    from .. import analysis as an
+
+    if any(c in value for c in "\r\n"):
+        raise EditError("a parameter value must be one line")
+    issue = an.parameter_value_issue(value, an.parameter_type(d, n))
+    if issue:
+        name = (d.cues("ParamCue").get(n) if d is not None else None) or f"P{n}"
+        raise EditError(f"{who}: parameter {name!r} = {value!r}: {issue[1]} (SIMPL: {issue[0]})")
+
+
 @dataclass
 class EditLog:
     lines: list[str] = field(default_factory=list)
@@ -248,6 +261,8 @@ class Editor:
             )
         if len(params) < n_fixed_par:
             raise EditError(f"{ls.name} needs {n_fixed_par} parameter(s): {list(ls.cues('ParamCue').values())}")
+        for n, v in enumerate(params, 1):
+            check_parameter_value(ls, n, str(v), ls.name)
 
         if not allow_empty_pins and (any(r in (None, "") for r in inputs) or any(r in (None, "") for r in outputs)):
             # SIMPL marks a symbol with an empty required pin incomplete (CF=1); which pins are
@@ -510,8 +525,13 @@ class Editor:
         _, n = self._parse_pin(pin, "P")
         if f"P{n}" not in s.record:
             raise EditError(f"#{s.handle} has no parameter P{n} (it has {s.record.get('mP') or 0})")
-        if any(c in str(value) for c in "\r\n"):
-            raise EditError("a parameter value must be one line")
+        from .. import analysis as an
+
+        if s.code in an.MODULE_CODES:
+            d = an.module_definition(self.program_path, s, self.installed_modules) if self.program_path else None
+        else:
+            d = self.lib.get(s.code) if self.lib is not None else None
+        check_parameter_value(d, n, str(value), f"#{s.handle}")
         s.record.set(f"P{n}", str(value))
         self._reload()
         self.log.add(f"set #{s.handle} P{n} = {value!r}")
@@ -798,6 +818,8 @@ class Editor:
                 values[n] = hit[0]
                 if hit[1]:
                     labels[n] = hit[1]
+        for n, v in values.items():
+            check_parameter_value(d, n, v, str(module))
 
         # SIMPL requires every pin with a plain name (9,963 of 9,963 wired in the corpus);
         # [bracketed] pins are optional. Unused required pins get SIMPL's standard placeholder

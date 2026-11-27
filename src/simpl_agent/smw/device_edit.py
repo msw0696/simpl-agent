@@ -550,9 +550,10 @@ def _apply_params_and_pins(ed: Editor, lines: list, ls: LibSymbol, parameters, c
                 values[byname[str(k).lower()]] = str(v)
         else:
             raise EditError("parameters must be a list or {name: value}")
+        from .edit import check_parameter_value
+
         for i, v in values.items():
-            if "\r" in v or "\n" in v:
-                raise EditError("parameter values must be one line")
+            check_parameter_value(ls, i, v, f.get("Name") or "device")
             rec.set(f"P{i}", v)
     if connect:
         if not isinstance(connect, dict):

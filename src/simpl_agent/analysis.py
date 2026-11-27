@@ -240,6 +240,60 @@ def module_targets(d: LibSymbol) -> list[str]:
 UNUSED_PIN = "[~UNUSED~]"
 REFERENCE_NAME = "[Reference Name]"
 
+# Parameter values (SIMPL help: Compiler Errors 105-108, 125). SIMPL reads every backslash in a
+# parameter as an escape: \a \b \f \n \r \t \v \\ and \x with two hex digits. Those are the only
+# escapes in the 380 public programs (0 others in every placed parameter value). \u drew warning
+# LGCMCVT236 "Illegal unicode constant" in SIMPL 4.32 (2026-11-25), so it's refused too.
+_SIMPLE_ESCAPES = set("abfnrtv\\")
+_HEX = set("0123456789abcdefABCDEF")
+# Numeric parameter types (ParamSigType). The help's flat single-precision limits (65535, 100%, FFFFh,
+# 582s) don't hold for every symbol: the corpus has Numeric Keypad 99999d, Oscillator 655.35s and
+# Retriggerable One Shot 660s, so only the value's form is checked. These forms cover every value of
+# these types in the corpus (37,900): 10d, -5d, 0, 50%, 0.25%, 2s, .01s, 1t, 1Fh, '2', 07.50.00.00s.
+NUMERIC_PARAM_TYPES = {"constant", "percent", "time", "hexaddress"}
+_NUMERIC_VALUE_RE = re.compile(
+    r"^(-?(\d+\.?\d*|\.\d+)[dDsStT%]?|[0-9A-Fa-f]+[hH]|'[^']'|\d+(\.\d+){1,3}[sS])$")
+
+
+def parameter_type(d: LibSymbol | None, n: int) -> str:
+    """Parameter n's type (ParamSigType, lower case): its own, else the nearest one before it, as a
+    variable parameter list shares its first parameter's type ('' if unknown)."""
+    return _pin_type(d.fields, "ParamSigType", n) if d is not None else ""
+
+
+def parameter_value_issue(value: str, ptype: str = "") -> tuple[str, str] | None:
+    """(SIMPL message code, explanation) when SIMPL would reject or misread a parameter value.
+    Read-only device text (UI_RO_String) is never checked: SIMPL writes it."""
+    if ptype == "ui_ro_string" or value == "":
+        return None
+    i = value.find("\\")
+    while i >= 0:
+        nxt = value[i + 1:i + 2]
+        if nxt == "":
+            return ("LGCMCVT107", "ends with a lone backslash, which SIMPL reads as an unfinished escape; "
+                    "write \\\\ for a backslash")
+        if nxt == "x":
+            digits = len(value[i + 2:i + 4]) - len(value[i + 2:i + 4].lstrip("0123456789abcdefABCDEF"))
+            if digits < 2:
+                if i + 2 + digits >= len(value):
+                    return ("LGCMCVT105", f"the hex escape {value[i:]!r} ends the value before its two hex "
+                            "digits; write each byte as \\x and two digits, like \\x0D")
+                return ("LGCMCVT125", f"illegal hex escape {value[i:i + 2 + digits + 1]!r}: write each byte as "
+                        "\\x and two digits, like \\x05 (not \\x5)")
+            i = value.find("\\", i + 4)
+            continue
+        if nxt == "u":
+            return ("LGCMCVT236", "\\u is read as a unicode escape (SIMPL reports an illegal unicode constant); "
+                    "write \\\\ for a backslash")
+        if nxt not in _SIMPLE_ESCAPES:
+            return ("LGCMCVT106", f"invalid escape \\{nxt}: SIMPL knows \\a \\b \\f \\n \\r \\t \\v \\\\ and "
+                    "\\x with two hex digits; write \\\\ for a backslash")
+        i = value.find("\\", i + 2)
+    if ptype in NUMERIC_PARAM_TYPES and not _NUMERIC_VALUE_RE.match(value):
+        return ("SA-PARAM-FORM", f"{value!r} isn't a SIMPL {ptype} value: use a number with d, %, s, t "
+                "or h (10d, 50%, 2.5s, 10t, 1Fh), or hh.mm.ss.ss s for long times")
+    return None
+
 
 def _int(v: str | None) -> int:
     return int(v) if v and str(v).lstrip("-").isdigit() else 0
@@ -475,6 +529,32 @@ def module_problems(prog: Program, program_path: Path | None, installed: Path | 
     return out
 
 
+PARAM_SEVERITY = {"LGCMCVT105": "notice", "LGCMCVT106": "notice", "LGCMCVT107": "notice",
+                  "LGCMCVT125": "warning", "LGCMCVT236": "warning", "SA-PARAM-FORM": "warning"}
+
+
+def parameter_problems(prog: Program, lib: SymbolLibrary | None, program_path: Path | None = None,
+                       installed: Path | None = None) -> list[Problem]:
+    """Parameter values SIMPL would report when compiling (bad escapes, 105-107/125/236) or that
+    aren't a value of their numeric type."""
+    out: list[Problem] = []
+    for s in prog.symbols.values():
+        if s.code in MODULE_CODES:
+            d = module_definition(program_path, s, installed) if program_path is not None else None
+        else:
+            d = lib.get(s.code) if lib is not None else None
+        for k, v in s.record.lines:
+            if not k or k[0] != "P" or not k[1:].isdigit():
+                continue
+            issue = parameter_value_issue(v, parameter_type(d, int(k[1:])))
+            if issue:
+                where = simpl_number(prog, s.handle) or f"#{s.handle}"
+                out.append(Problem(PARAM_SEVERITY[issue[0]], issue[0],
+                                   f"Parameter P{k[1:]} of {display_name(s, lib)} at {where}: {issue[1]}.",
+                                   symbols=[s.handle]))
+    return out
+
+
 @dataclass
 class Flow:
     """Who drives each signal and where it goes."""
@@ -595,6 +675,7 @@ def find_problems(prog: Program, lib: SymbolLibrary | None,
                                symbols=[s.handle]))
     out += module_problems(prog, program_path, installed)
     out += gui_extension_problems(prog, program_path)
-    order = {"error": 0, "warning": 1, "notice": 2}
+    out += parameter_problems(prog, lib, program_path, installed)
+    order ={"error": 0, "warning": 1, "notice": 2}
     out.sort(key=lambda p: order[p.severity])
     return out
