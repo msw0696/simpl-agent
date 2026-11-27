@@ -923,7 +923,9 @@ class Tools(EditTools):
                 r = cmp.compile_program(p, timeout_s=timeout)
             except cmp.CompileError as e2:
                 raise ToolError(str(e2)) from e2
-        got = {(m["code"], m["message"]) for m in r["messages"]}
+        # 2-Series programs get SIMPL's RLCMCVT codes for the same messages (LGCMCVT on 3- and 4-Series).
+        got = {(m["code"].replace("RLCMCVT", "LGCMCVT", 1) if m["code"].startswith("RLCMCVT1") else m["code"],
+                m["message"]) for m in r["messages"]}
         after = hashlib.sha256(p.read_bytes()).hexdigest()
         failed = "incomplete symbols" in r["output"] or (r["exit_code"] not in (0, None) and not r["messages"])
         return {

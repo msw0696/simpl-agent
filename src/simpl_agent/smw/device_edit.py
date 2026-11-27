@@ -553,7 +553,7 @@ def _apply_params_and_pins(ed: Editor, lines: list, ls: LibSymbol, parameters, c
         from .edit import check_parameter_value
 
         for i, v in values.items():
-            check_parameter_value(ls, i, v, f.get("Name") or "device")
+            check_parameter_value(ls, i, v, f.get("Name") or "device", template=ed.is_macro_file)
             rec.set(f"P{i}", v)
     if connect:
         if not isinstance(connect, dict):

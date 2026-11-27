@@ -91,3 +91,28 @@ def test_a_macro_file_on_its_own_counts_its_pins_as_outside(tmp_path: Path) -> N
     assert found(umc) == {("LGCMCVT102", 'Signal "lonely_in" has no driving source.'),
                           ("LGCMCVT103", 'Signal "lonely_out" has no destination.'),
                           ("LGCMCVT102", 'Signal "out_b" has no driving source.')}
+
+
+def test_nothing_is_reported_inside_a_crestron_cmc(tmp_path: Path) -> None:
+    p = program(tmp_path, second_copy=False)
+    (tmp_path / "Relay.umc").rename(tmp_path / "Relay.cmc")
+    p.write_bytes(p.read_bytes().replace(b"Relay.umc", b"Relay.cmc"))
+    # The outer nets are still judged through the macro; nothing wholly inside it is reported.
+    assert found(p) == {("LGCMCVT102", 'Signal "top_a" has no driving source.'),
+                        ("LGCMCVT102", 'Signal "top_out_b" has no driving source.'),
+                        ("LGCMCVT103", 'Signal "top_out_a" has no destination.')}
+
+
+def test_commented_out_symbols_are_left_out(tmp_path: Path) -> None:
+    smw = (rec(Version=1) + rec(ObjTp="FSgntr", Sgntr="SimplWindow") + rec(ObjTp="Hd", S0Nd=1, S1Nd=2, SLNd=3)
+           + rec(ObjTp="Sm", H=4, SmC=156, Nm="Logic", mC=3, C1=5, C2=6, C3=7)
+           + rec(ObjTp="Sm", H=5, SmC=3, PrH=4, mI=1, I1=8, mO=1, tO=1, O1=9, OpF=0)  # commented out
+           + rec(ObjTp="Sm", H=6, SmC=3, PrH=4, mI=1, I1=10, mO=1, tO=1, O1=11)
+           + rec(ObjTp="Sm", H=7, SmC=286, PrH=4, mI=1, I1=11)  # Virtual Device for Module Connection
+           + "".join(rec(ObjTp="Sg", H=h, Nm=n) for h, n in ((8, "in_x"), (9, "out_x"), (10, "in_y"), (11, "out_y"))))
+    p = tmp_path / "c.smw"
+    p.write_bytes(smw.encode("latin-1"))
+    assert an.commented_out(load(rawfile.read(p)).symbols[5])
+    # in_x/out_x only touch the commented-out OR: nothing. out_y is read only by the virtual device: 103.
+    assert found(p) == {("LGCMCVT102", 'Signal "in_y" has no driving source.'),
+                        ("LGCMCVT103", 'Signal "out_y" has no destination.')}

@@ -35,13 +35,17 @@ class EditError(ValueError):
     """An edit that can't be applied. Nothing has been changed when this is raised."""
 
 
-def check_parameter_value(d: LibSymbol | None, n: int, value: str, who: str) -> None:
+def check_parameter_value(d: LibSymbol | None, n: int, value: str, who: str, template: bool = False) -> None:
     """Refuse a parameter value SIMPL would reject or misread (SIMPL help: Compiler Errors 105-107,
-    125; docs/format.md "Parameter values"). ``d`` is the symbol's definition, for its type."""
+    125; docs/format.md "Parameter values"). ``d`` is the symbol's definition, for its type.
+    ``template``: the value is inside a macro file, where it may name the macro's own parameters
+    (#Name, or \\[#Name\\] inside a string) for SIMPL to fill in, so only the one-line rule applies."""
     from .. import analysis as an
 
     if any(c in value for c in "\r\n"):
         raise EditError("a parameter value must be one line")
+    if template:
+        return
     issue = an.parameter_value_issue(value, an.parameter_type(d, n))
     if issue:
         name = (d.cues("ParamCue").get(n) if d is not None else None) or f"P{n}"
@@ -90,6 +94,8 @@ class Editor:
         self.lib = library
         self.program_path = Path(program_path) if program_path else None
         self.installed_modules = installed_modules
+        # Editing a macro file itself (.umc/.cmc): parameter values are templates (#Name).
+        self.is_macro_file = bool(self.program_path and self.program_path.suffix.lower() in (".umc", ".cmc"))
         self.verified_codes = load_verified_codes() if verified_codes == "default" else verified_codes
         self.log = EditLog()
         self.prog: Program = load(raw)
@@ -262,7 +268,7 @@ class Editor:
         if len(params) < n_fixed_par:
             raise EditError(f"{ls.name} needs {n_fixed_par} parameter(s): {list(ls.cues('ParamCue').values())}")
         for n, v in enumerate(params, 1):
-            check_parameter_value(ls, n, str(v), ls.name)
+            check_parameter_value(ls, n, str(v), ls.name, template=self.is_macro_file)
 
         if not allow_empty_pins and (any(r in (None, "") for r in inputs) or any(r in (None, "") for r in outputs)):
             # SIMPL marks a symbol with an empty required pin incomplete (CF=1); which pins are
@@ -531,7 +537,7 @@ class Editor:
             d = an.module_definition(self.program_path, s, self.installed_modules) if self.program_path else None
         else:
             d = self.lib.get(s.code) if self.lib is not None else None
-        check_parameter_value(d, n, str(value), f"#{s.handle}")
+        check_parameter_value(d, n, str(value), f"#{s.handle}", template=self.is_macro_file)
         s.record.set(f"P{n}", str(value))
         self._reload()
         self.log.add(f"set #{s.handle} P{n} = {value!r}")
@@ -819,7 +825,7 @@ class Editor:
                 if hit[1]:
                     labels[n] = hit[1]
         for n, v in values.items():
-            check_parameter_value(d, n, v, str(module))
+            check_parameter_value(d, n, v, str(module), template=self.is_macro_file)
 
         # SIMPL requires every pin with a plain name (9,963 of 9,963 wired in the corpus);
         # [bracketed] pins are optional. Unused required pins get SIMPL's standard placeholder

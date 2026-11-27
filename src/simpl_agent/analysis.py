@@ -512,7 +512,7 @@ def module_problems(prog: Program, program_path: Path | None, installed: Path | 
     if program_path is None:
         return out
     for s in prog.symbols.values():
-        if s.code != SPLUS_CODE:
+        if s.code != SPLUS_CODE or commented_out(s):
             continue
         d = module_definition(program_path, s, installed)
         if d is None:
@@ -536,9 +536,16 @@ PARAM_SEVERITY = {"LGCMCVT105": "notice", "LGCMCVT106": "notice", "LGCMCVT107": 
 def parameter_problems(prog: Program, lib: SymbolLibrary | None, program_path: Path | None = None,
                        installed: Path | None = None) -> list[Problem]:
     """Parameter values SIMPL would report when compiling (bad escapes, 105-107/125/236) or that
-    aren't a value of their numeric type."""
+    aren't a value of their numeric type. Not inside a macro file: there values may name the macro's
+    own parameters (#Name, or \\[#Name\\] inside a string) for SIMPL to fill in when it's placed
+    (37,000+ such values in the corpus's and SIMPL's installed macros)."""
     out: list[Problem] = []
+    if (program_path is not None and program_path.suffix.lower() in (".umc", ".cmc")) or any(
+            s.code == ARG_DEFINITION_CODE for s in prog.symbols.values()):
+        return out
     for s in prog.symbols.values():
+        if commented_out(s):
+            continue
         if s.code in MODULE_CODES:
             d = module_definition(program_path, s, installed) if program_path is not None else None
         else:
@@ -569,6 +576,8 @@ class Flow:
 def signal_flow(prog: Program) -> Flow:
     f = Flow()
     for s in prog.symbols.values():
+        if commented_out(s):
+            continue
         if s.code == ARG_DEFINITION_CODE:
             # A macro's argument list, seen from inside the macro: its inputs are the
             # macro's incoming arguments (sources) and its outputs are the outgoing
@@ -608,10 +617,18 @@ class Problem:
         return d
 
 
-# Digital/Analog/Serial Force only fix an ambiguous signal's type: SIMPL doesn't count their inputs as
-# destinations (a macro signal on Serial Force alone drew no message; one with a driver and Serial Force
-# drew 103; SIMPL 4.32, 2026-11-27).
-FORCE_CODES = {470, 471, 472}
+# Symbols whose inputs SIMPL doesn't count as destinations (SIMPL 4.32 compiles, 2026-11-27):
+# Digital/Analog/Serial Force only fix an ambiguous signal's type (a macro signal on Serial Force alone
+# drew no message; one with a driver and Serial Force drew 103), and a Virtual Device for Module
+# Connection only exports a macro's signal to a device (a Crestron macro's relay outputs drew 103).
+NOT_DESTINATION_CODES = {470, 471, 472, 286}
+
+
+def commented_out(s: Symbol) -> bool:
+    """Commented out in SIMPL (OpF=0): the compiler ignores it. A program with OpF=0 symbols made SIMPL
+    ask about commented-out symbols, and signals driven only by them drew no message (2026-11-27). In the
+    corpus 1,304 symbols in 94 programs have it, and every symbol in a commented-out folder has it too."""
+    return s.record.get("OpF") == "0"
 
 
 def macro_file(folder: Path | None, symbol: Symbol, installed: Path | None = None) -> Path | None:
@@ -648,6 +665,7 @@ class _Level:
     where: str  # SIMPL's symbol number of the placed macro ('' at the top)
     file: Path | None = None
     nested: bool = False
+    crestron: bool = False  # inside a Crestron .cmc macro: SIMPL reports nothing wholly inside it
 
 
 def signal_nets(prog: Program, folder: Path | None, installed: Path | None = None, max_depth: int = 8):
@@ -683,12 +701,14 @@ def signal_nets(prog: Program, folder: Path | None, installed: Path | None = Non
             if h in builtin or sg.name.startswith("//"):
                 exempt.add((li, h))
         for s in p.symbols.values():
+            if commented_out(s):
+                continue
             if s.code == ARG_DEFINITION_CODE:
                 if li == 0:  # analysing a macro file itself: its own pins come from outside
                     fed.update((li, h) for h in s.inputs.values())
                     leaves.update((li, h) for h in s.outputs.values())
                 continue
-            if s.code in FORCE_CODES:
+            if s.code in NOT_DESTINATION_CODES:
                 continue
             f = macro_file(folder, s, installed) if depth < max_depth else None
             inner = _macro_program_cached(str(f), f.stat().st_mtime) if f is not None else None
@@ -698,7 +718,8 @@ def signal_nets(prog: Program, folder: Path | None, installed: Path | None = Non
                 dests.update((li, h) for h in s.inputs.values())
                 continue
             where = simpl_number(p, s.handle) or f"#{s.handle}"
-            levels.append(_Level(inner, where if li == 0 else f"{levels[li].where} > {where}", f, nested=li > 0))
+            levels.append(_Level(inner, where if li == 0 else f"{levels[li].where} > {where}", f, nested=li > 0,
+                                 crestron=levels[li].crestron or f.suffix.lower() == ".cmc"))
             ci = len(levels) - 1
             ib = set(inner.builtin_signals.values())
             for pins, apins in ((s.inputs, arg.inputs), (s.outputs, arg.outputs)):
@@ -747,7 +768,9 @@ def _source_destination_problems(prog: Program, folder: Path | None, installed: 
             pins = top.destinations.get(h, []) if code == "LGCMCVT102" else top.drivers.get(h, [])
             out.append(Problem("warning" if code == "LGCMCVT102" else "notice", code, f'Signal "{sg.name}" {what}.',
                                signal=sg.name, symbols=sorted({s for s, _ in pins})))
-        else:
+        elif not lv.crestron:
+            # Nothing is reported wholly inside a Crestron .cmc macro: a placed udsrly_int.cmc has two One
+            # Shot outputs nothing reads, and SIMPL said nothing, though a top-level One Shot drew 103.
             code = "LGCMCVT126" if no_source else "LGCMCVT127"
             out.append(Problem("warning" if code == "LGCMCVT126" else "notice", code,
                                f'Signal "{sg.name}" in {lv.where} (Module name {lv.file}) {what}.',
@@ -805,7 +828,7 @@ def find_problems(prog: Program, lib: SymbolLibrary | None,
     for s in prog.symbols.values():
         # Parents inherit CF=1 from an incomplete child; report only the symbol itself.
         inherited = any(prog.symbols[c].record.get("CF") == "1" for c in s.children if c in prog.symbols)
-        if s.record.get("CF") == "1" and not is_folder(s) and not inherited:
+        if s.record.get("CF") == "1" and not is_folder(s) and not inherited and not commented_out(s):
             out.append(Problem("warning", "SA-INCOMPLETE",
                                f"Symbol #{s.handle} ({display_name(s, lib)}) is marked incomplete by SIMPL: a required pin is empty.",
                                symbols=[s.handle]))

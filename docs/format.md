@@ -390,26 +390,41 @@ A module written for the conference-room test program (`DisplayFeedback.usp`: `B
 - **Ranges aren't checked:** the help's single-precision limits (65535, 100%, FFFFh, 582s) don't hold for every symbol. The corpus has Numeric Keypad `99999d`, Hosted BACnet Device `562036d`, Oscillator `655.35s` and Retriggerable One Shot `660s`. Which parameters are single precision isn't in the library fields SIMPL Agent reads.
 - **What SIMPL Agent does:** `add_symbol`, `add_module`, `add_device` and `set_parameter` refuse a bad value, naming SIMPL's code. `find_problems` reports existing ones (`LGCMCVT105`-`107`, `125`, `236`, and `SA-PARAM-FORM` for a numeric value in no known form).
 
-## Signals inside macros (2026-11-27)
-- **Source:** SIMPL 4.32 compiles of a public program with one macro (ZowieTest, from the `neuralp/zowieapi` repo).
-  - As published, its 3 SIMPL+ modules don't compile in this SIMPL. A test copy with them removed from the macro gave the same 59 messages, so SIMPL leaves a failed SIMPL+ module out of the circuit.
-  - `find_problems` predicts all 59 messages of the test copy exactly: 47 warnings and 12 notices, including 6 LGCMCVT126 and 10 LGCMCVT127. The old per-level rule got 48 of them wrong.
+## Signals inside macros, and commented-out symbols (2026-11-27)
+- **Live evidence:** SIMPL 4.32 compiles (never transferred) of test copies of two public programs, compared with `find_problems` message for message. All five match exactly.
+
+  | Test copy | What it tests | SIMPL's messages |
+  |---|---|---|
+  | ZowieTest (RMC3), its macro's 3 SIMPL+ modules removed | a macro with dangling signals | 59 |
+  | the same, plus Crestron's `udsrly_int.cmc` placed | an installed Crestron macro | 64 |
+  | the same, plus a top-level Retriggerable One Shot | whether a One Shot output counts | 66 |
+  | NCSD Program 1c_1 (CP2E, 2-Series), as published | commented-out symbols | 0 |
+  | the same, plus a probe OR | that the logic checks run | 2 |
+
+  - As published, ZowieTest's SIMPL+ modules don't compile in this SIMPL, and the messages were the same with them removed: SIMPL leaves a failed SIMPL+ module out of the circuit.
+  - The old rule judged each level on its own and treated macro pins as real drivers and destinations. It matched only 5 of the 59 messages and predicted 75 that SIMPL didn't report.
+  - A real DMPS3 classroom program with 23 placed macros and commented-out symbols also compiled with 0 messages, and `find_problems` predicts 0.
 - **One circuit:** SIMPL's compiler treats a placed macro as part of the program.
   - A signal on a macro pin and the macro's own signal on that pin (through the Argument Definition, pin n to pin n) are one net.
-  - The net is judged as a whole: 102 when something reads it and nothing drives it, 103 when something drives it and nothing reads it.
+  - The net is judged as a whole: 102 when something reads it and nothing drives it, 103 when something drives it and nothing reads it. A net that's only on macro pins is neither.
   - It's reported once, by the outer name. Example: `Zowie_ndi_1_name$` leaves the macro, is read inside by Make String Permanent and is driven by nothing, so SIMPL reported 102, not 103.
-  - Signals wholly inside a macro get LGCMCVT126 (warning, though the help calls it a notice) or LGCMCVT127 (notice): `Signal "x" in S-2 (Module name <path of the .umc>) has no driving source.` That's once per placed copy, with the copy's symbol number.
-- **Digital, Analog and Serial Force** (codes 471, 472, 470) only fix a signal's type, and SIMPL doesn't count their inputs as destinations.
-  - 16 macro signals on a Serial Force alone drew no message.
+- **Wholly inside a macro:** LGCMCVT126 (a warning, though the help calls it a notice) or LGCMCVT127 (notice), once per placed copy: `Signal "x" in S-2 (Module name <path of the .umc>) has no driving source.`
+- **Crestron's `.cmc` macros:** SIMPL reports nothing wholly inside them. A placed `udsrly_int.cmc` has two One Shot outputs that nothing reads, and SIMPL said nothing, though a top-level One Shot in the same state drew 103. Their signals still join the outer circuit.
+- **Not destinations:** inputs of Digital, Analog and Serial Force (471, 472, 470), which only fix a signal's type, and of Virtual Device for Module Connection (286).
+  - A macro signal on a Serial Force alone drew no message.
   - A signal with a driver and only a Serial Force drew 103.
+  - A Crestron macro's relay outputs, read inside only by a Virtual Device for Module Connection, drew 103.
+- **Commented out = `OpF=0`** on the symbol's record. The compiler ignores such symbols.
+  - Evidence: SIMPL asked "Commented out Symbols and/or Devices" for NCSD, and its 12 signals driven only by `OpF=0` symbols drew no message.
+  - In the corpus, 1,304 symbols in 94 programs have it, and all 1,059 symbols inside commented-out folders carry it too.
+  - `find_problems` leaves them out of every check: signals, second drivers, parameters, incomplete symbols and changed modules.
+- **2-Series codes:** a CP2E program's messages read `RLCMCVT102`/`103` where 3- and 4-Series read `LGCMCVT`. `compile_program` compares them as the same.
 - **Inferred, not yet seen:**
-  - An undriven outer signal into a macro pin that nothing reads inside gives no message (5 corpus cases).
-  - An unwired macro input pin counts as held at 0: SIMPL's help gives warning 124 for it, not 126.
-  - The symbol number of a macro inside a macro. These messages are marked unconfirmed.
-- **Corpus effect:**
-  - Programs without macros are unchanged, apart from the Force rule (one file).
-  - In the 211 programs with macros, 146 of the old messages go away:
-    - 106 are signals read inside a macro;
-    - 35 are signals driven inside one;
-    - 5 are the inferred case above.
-  - A macro whose file isn't found still counts as a plain symbol.
+  - An undriven outer signal into a macro pin that nothing reads inside gives no message.
+  - An unwired macro input counts as held at 0: SIMPL's help gives warning 124 for it, not 126.
+  - The symbol number SIMPL gives a macro inside a macro. Those messages are marked unconfirmed.
+- **Corpus effect, against the old rule:**
+  - Programs without macros are unchanged, apart from the type-only symbols and commented-out symbols.
+  - In programs with macros, most changes are signals read or driven inside a macro.
+  - Two test programs gain 28 notices each, for signals read only by a Serial Force (the rule above).
+- **Parameter values inside macro files** aren't checked. There they may name the macro's own parameters (`#Name`, or `\[#Name\]` inside a string) for SIMPL to fill in when the macro is placed: more than 37,000 such values in the corpus's and SIMPL's installed macros. Values placed in programs are checked; none in the 380 public programs is flagged.
