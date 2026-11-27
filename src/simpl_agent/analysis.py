@@ -219,6 +219,24 @@ def extender_definition(prog: Program, symbol: Symbol, program_path: Path | None
     return LibSymbol(code=EXTENDER_CODE, name=hit.get("Name") or symbol.name or "", fields=hit)
 
 
+SERIES_OF_CLASS = {"5": "2-Series", "6": "3-Series", "7": "4-Series"}
+
+
+def processor_class(prog: Program, devlib) -> str | None:
+    """The program's control-system class (RackClass in SIMPL's device library: 6 = 3-Series,
+    7 = 4-Series), the numbering a compiled SIMPL+ header uses in Inclusions_CDS."""
+    hd = prog.header
+    cnh = hd.get("CnH") if hd is not None else None
+    proc = prog.devices.get(int(cnh)) if cnh and cnh.isdigit() else None
+    d = devlib.get(proc.code) if (devlib is not None and proc is not None) else None
+    return (d.fields.get("RackClass") or None) if d is not None else None
+
+
+def module_targets(d: LibSymbol) -> list[str]:
+    """The control-system classes a compiled SIMPL+ module was built for (Inclusions_CDS)."""
+    return [x.strip() for x in (d.fields.get("Inclusions_CDS") or "").split(",") if x.strip()]
+
+
 UNUSED_PIN = "[~UNUSED~]"
 REFERENCE_NAME = "[Reference Name]"
 

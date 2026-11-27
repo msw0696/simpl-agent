@@ -302,3 +302,26 @@ def test_placed_copies_named_from_the_previous_build(tmp_path: Path) -> None:
         "module": "fake_timer.usp", "connect": {"Trig": "t_trig", "Hours": "t_hours", "Progress": "t_progress"},
         "parameters": {"Timeout": "5s"}}}
     assert c["signals_on_removed_pins"] == {"Done": "t_done"}
+
+
+def test_splus_module_must_target_the_programs_processor(tmp_path: Path) -> None:
+    """SIMPL only adds a SIMPL+ module built for the program's control system (Inclusions_CDS:
+    6 = 3-Series, 7 = 4-Series; the processor's RackClass); all 365 corpus placements fit."""
+    import pytest
+
+    from simpl_agent.smw.edit import EditError
+
+    ed, p = module_editor(tmp_path)
+    for targets, cls, ok in (("7", "6", False), ("6,7", "6", True), ("7", "7", True), (None, "6", True)):
+        ush = USH_FULL if targets is None else USH_FULL.replace("  Name=fake_timer\r\n",
+                                                                 f"  Name=fake_timer\r\n  Inclusions_CDS={targets}\r\n")
+        (tmp_path / "fake_timer.ush").write_bytes(ush.encode("latin-1"))
+        import os
+
+        os.utime(tmp_path / "fake_timer.ush", (len(ush) + int(cls), len(ush) + int(cls)))  # new date: no cached header
+        ed.processor_class = cls
+        if ok:
+            ed.module_definition("fake_timer.usp")
+        else:
+            with pytest.raises(EditError, match="compiled for 4-Series only.*3-Series.*'3series'"):
+                ed.module_definition("fake_timer.usp")

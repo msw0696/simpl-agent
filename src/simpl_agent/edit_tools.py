@@ -222,6 +222,7 @@ class EditTools:
         from .corpus import INSTALLED_MODULES
 
         ed = Editor(rawfile.parse(data), lib, program_path=p, installed_modules=INSTALLED_MODULES)
+        ed.processor_class = an.processor_class(ed.prog, self._device_library())
         before_struct = structural_problems(ed.prog)
         before_probs = _problem_keys(ed.prog, lib, p)
         for i, e in enumerate(edits, 1):

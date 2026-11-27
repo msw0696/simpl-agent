@@ -693,6 +693,16 @@ class Editor:
         if code == an.SPLUS_CODE:
             if self.program_path is None or not (self.program_path.parent / name).exists():
                 raise EditError(f"{name} must be next to the program so SIMPL can compile it")
+            # SIMPL only adds a module that targets the program's control system, and comments out one
+            # that doesn't (SIMPL help: Modules Targeting 4-Series; Warning 153). All 365 placed SIMPL+
+            # modules in the corpus target their program's class.
+            cls, targets = getattr(self, "processor_class", None), an.module_targets(d)
+            if cls and targets and cls not in targets:
+                want = an.SERIES_OF_CLASS.get(cls, f"class {cls}").lower().replace("-", "")
+                built = ", ".join(an.SERIES_OF_CLASS.get(t, t) for t in targets)
+                raise EditError(f"{name} was compiled for {built} only, but this program's processor is "
+                                f"{an.SERIES_OF_CLASS.get(cls, cls)}: recompile it with splus_compile targets "
+                                f"including '{want}'")
         # Modules with pin groups ([~BeginGroup~]) get per-pin group state (GrpStI/GrpStO) when SIMPL
         # saves them. It's display state: a Philips Hue Bridge placed without it compiled with 0 errors
         # in SIMPL 4.32 (F12 round 4, 2026-11-24), so these are allowed.

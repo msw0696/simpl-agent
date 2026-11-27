@@ -996,6 +996,7 @@ class Tools(EditTools):
 
         p, data, _ = self._read_program(path)
         ed = Editor(rawfile.parse(data), None, program_path=p, installed_modules=INSTALLED_MODULES)
+        ed.processor_class = an.processor_class(ed.prog, self._device_library())
         try:
             code, d, lay = ed.module_definition(module)
         except EditError as e:
@@ -1018,6 +1019,8 @@ class Tools(EditTools):
             "module": module, "kind": "macro" if code == an.MACRO_CODE else "SIMPL+",
             "name": d.name, "inputs": rows(lay["inputs"]), "outputs": rows(lay["outputs"]),
             "parameters_required": params,
+            **({"compiled_for": [an.SERIES_OF_CLASS.get(t, t) for t in an.module_targets(d)]}
+               if code == an.SPLUS_CODE and an.module_targets(d) else {}),
             "note": "Wire pins by these names in apply_edits add_module 'connect'. Unlisted pins stay "
                     "unconnected. Every listed parameter needs a value; a drop-down ('options') takes one "
                     "of its values or labels (ask the user which; 'default' is the module's own).",
