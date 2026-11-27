@@ -608,15 +608,157 @@ class Problem:
         return d
 
 
+# Digital/Analog/Serial Force only fix an ambiguous signal's type: SIMPL doesn't count their inputs as
+# destinations (a macro signal on Serial Force alone drew no message; one with a driver and Serial Force
+# drew 103; SIMPL 4.32, 2026-11-27).
+FORCE_CODES = {470, 471, 472}
+
+
+def macro_file(folder: Path | None, symbol: Symbol, installed: Path | None = None) -> Path | None:
+    """The .umc/.cmc file a placed macro names: beside the program, else in SIMPL's installed modules."""
+    if symbol.code != MACRO_CODE or not symbol.name:
+        return None
+    for f in ([folder] if folder is not None else []) + ([installed] if installed is not None else []):
+        c = f / symbol.name.strip()
+        if c.is_file():
+            return c
+    return None
+
+
+@lru_cache(maxsize=128)
+def _macro_program_cached(path: str, mtime: float) -> Program:
+    from .smw.model import load
+
+    return load(rawfile.parse(Path(path).read_bytes()))
+
+
+@dataclass
+class _Net:
+    has_source: bool = False  # a real symbol output drives it
+    has_dest: bool = False  # a real symbol input reads it
+    fed: bool = False  # a macro's own input pin (from outside, or held at 0) feeds it
+    leaves: bool = False  # it leaves through a macro's own output pin
+    exempt: bool = False
+    members: list[tuple[int, int]] = field(default_factory=list)  # (level, signal handle)
+
+
+@dataclass
+class _Level:
+    prog: Program
+    where: str  # SIMPL's symbol number of the placed macro ('' at the top)
+    file: Path | None = None
+    nested: bool = False
+
+
+def signal_nets(prog: Program, folder: Path | None, installed: Path | None = None, max_depth: int = 8):
+    """Signals joined across placed macros, as SIMPL's compiler sees them: a macro is part of one
+    circuit with its program, so a signal on a macro pin and the macro's signal inside are one net
+    (SIMPL 4.32 compile of a public program with a macro, 2026-11-27: such nets are reported once,
+    by the outer name; only nets wholly inside a macro get LGCMCVT126/127). A macro whose file isn't
+    found counts as a plain symbol (its outputs drive, its inputs are destinations).
+    Returns (levels, nets by (level, handle))."""
+    parent: dict[tuple[int, int], tuple[int, int]] = {}
+
+    def find(x):
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        parent[find(a)] = find(b)
+
+    levels: list[_Level] = [_Level(prog, "")]
+    sources: set[tuple[int, int]] = set()
+    dests: set[tuple[int, int]] = set()
+    fed: set[tuple[int, int]] = set()
+    leaves: set[tuple[int, int]] = set()
+    exempt: set[tuple[int, int]] = set()
+
+    def walk(li: int, depth: int) -> None:
+        p = levels[li].prog
+        builtin = set(p.builtin_signals.values())
+        for h, sg in p.signals.items():
+            parent.setdefault((li, h), (li, h))
+            if h in builtin or sg.name.startswith("//"):
+                exempt.add((li, h))
+        for s in p.symbols.values():
+            if s.code == ARG_DEFINITION_CODE:
+                if li == 0:  # analysing a macro file itself: its own pins come from outside
+                    fed.update((li, h) for h in s.inputs.values())
+                    leaves.update((li, h) for h in s.outputs.values())
+                continue
+            if s.code in FORCE_CODES:
+                continue
+            f = macro_file(folder, s, installed) if depth < max_depth else None
+            inner = _macro_program_cached(str(f), f.stat().st_mtime) if f is not None else None
+            arg = next((x for x in inner.symbols.values() if x.code == ARG_DEFINITION_CODE), None) if inner else None
+            if arg is None:
+                sources.update((li, h) for h in s.outputs.values())
+                dests.update((li, h) for h in s.inputs.values())
+                continue
+            where = simpl_number(p, s.handle) or f"#{s.handle}"
+            levels.append(_Level(inner, where if li == 0 else f"{levels[li].where} > {where}", f, nested=li > 0))
+            ci = len(levels) - 1
+            ib = set(inner.builtin_signals.values())
+            for pins, apins in ((s.inputs, arg.inputs), (s.outputs, arg.outputs)):
+                for n, ah in apins.items():
+                    h = pins.get(n)
+                    if h is None or (li, h) in exempt or ah in ib:
+                        # An unwired macro pin (SIMPL holds an input at 0, help: 124), or a constant:
+                        # the inside signal is treated as connected outside.
+                        (fed if pins is s.inputs else leaves).add((ci, ah))
+                    else:
+                        union((li, h), (ci, ah))
+            walk(ci, depth + 1)
+
+    walk(0, 0)
+    nets: dict[tuple[int, int], _Net] = {}
+    for x in list(parent):
+        net = nets.setdefault(find(x), _Net())
+        net.members.append(x)
+        net.has_source |= x in sources
+        net.has_dest |= x in dests
+        net.fed |= x in fed
+        net.leaves |= x in leaves
+        net.exempt |= x in exempt
+    return levels, nets
+
+
+def _source_destination_problems(prog: Program, folder: Path | None, installed: Path | None) -> list[Problem]:
+    levels, nets = signal_nets(prog, folder, installed)
+    out: list[Problem] = []
+    top = signal_flow(prog)
+    for net in sorted(nets.values(), key=lambda n: min(n.members)):
+        # As SIMPL: 102/126 when something reads the signal and nothing drives it, 103/127 when
+        # something drives it and nothing reads it. A signal only on a macro's own pins is neither.
+        no_source = net.has_dest and not (net.has_source or net.fed)
+        no_dest = net.has_source and not (net.has_dest or net.leaves)
+        if net.exempt or not (no_source or no_dest):
+            continue
+        li, h = min(net.members)
+        lv = levels[li]
+        sg = lv.prog.signals.get(h)
+        if sg is None:
+            continue
+        what = "has no driving source" if no_source else "has no destination"
+        if li == 0:
+            code = "LGCMCVT102" if no_source else "LGCMCVT103"
+            pins = top.destinations.get(h, []) if code == "LGCMCVT102" else top.drivers.get(h, [])
+            out.append(Problem("warning" if code == "LGCMCVT102" else "notice", code, f'Signal "{sg.name}" {what}.',
+                               signal=sg.name, symbols=sorted({s for s, _ in pins})))
+        else:
+            code = "LGCMCVT126" if no_source else "LGCMCVT127"
+            out.append(Problem("warning" if code == "LGCMCVT126" else "notice", code,
+                               f'Signal "{sg.name}" in {lv.where} (Module name {lv.file}) {what}.',
+                               signal=sg.name, confirmed=not lv.nested))
+    return out
+
+
 def find_problems(prog: Program, lib: SymbolLibrary | None,
                   program_path: Path | None = None, installed: Path | None = None) -> list[Problem]:
     flow = signal_flow(prog)
-    builtin = set(prog.builtin_signals.values())
     out: list[Problem] = []
-
-    def exempt(h: int) -> bool:
-        sg = prog.signals.get(h)
-        return h in builtin or sg is None or sg.name.startswith("//")
 
     # Errors first: things SIMPL itself would never write.
     for s in prog.symbols.values():
@@ -638,19 +780,13 @@ def find_problems(prog: Program, lib: SymbolLibrary | None,
         else:
             seen[key] = sg.handle
 
+    # No source / no destination (102/103, and 126/127 inside macros), with placed macros joined in.
+    out += _source_destination_problems(prog, program_path.parent if program_path is not None else None, installed)
+    builtin = set(prog.builtin_signals.values())
     for h, sg in sorted(prog.signals.items()):
-        if exempt(h):
+        if h in builtin or sg.name.startswith("//"):
             continue
         drv = flow.drivers.get(h, [])
-        dst = flow.destinations.get(h, [])
-        has_source = bool(drv or flow.arg_in.get(h))
-        goes_out = bool(dst or flow.arg_out.get(h))
-        if dst and not has_source:
-            out.append(Problem("warning", "LGCMCVT102", f'Signal "{sg.name}" has no driving source.',
-                               signal=sg.name, symbols=sorted({s for s, _ in dst})))
-        if drv and not goes_out:
-            out.append(Problem("notice", "LGCMCVT103", f'Signal "{sg.name}" has no destination.',
-                               signal=sg.name, symbols=sorted({s for s, _ in drv})))
         if len(drv) > 1 and sg.type == "digital":
             def shares(sym_h: int) -> bool:
                 ls = lib.get(prog.symbols[sym_h].code) if lib else None

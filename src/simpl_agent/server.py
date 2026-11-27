@@ -894,8 +894,10 @@ class Tools(EditTools):
             lib = self.index().library
         except ToolError:
             lib = None
-        predicted = {(x.code, x.message) for x in an.find_problems(prog, lib)}
         from .corpus import INSTALLED_MODULES
+
+        predicted = {(x.code, x.message) for x in an.find_problems(prog, lib, p, INSTALLED_MODULES)
+                     if x.code.startswith(("LGCMCVT", "RLCMCVT", "SWIN"))}
 
         changed_modules = [x.message for x in an.module_problems(prog, p, INSTALLED_MODULES)]
         timeout = max(60, min(int(timeout_s), 3600))

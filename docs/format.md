@@ -389,3 +389,27 @@ A module written for the conference-room test program (`DisplayFeedback.usp`: `B
 - **Numeric types** (`Constant`, `Percent`, `Time`, `HexAddress`): every corpus value is one of `10d`, `-5d`, `0`, `50%`, `0.25%`, `2s`, `.01s`, `1t`, `1Fh`, `'2'` or a long time `07.50.00.00s` / `5.00.00s` (units in either case).
 - **Ranges aren't checked:** the help's single-precision limits (65535, 100%, FFFFh, 582s) don't hold for every symbol. The corpus has Numeric Keypad `99999d`, Hosted BACnet Device `562036d`, Oscillator `655.35s` and Retriggerable One Shot `660s`. Which parameters are single precision isn't in the library fields SIMPL Agent reads.
 - **What SIMPL Agent does:** `add_symbol`, `add_module`, `add_device` and `set_parameter` refuse a bad value, naming SIMPL's code. `find_problems` reports existing ones (`LGCMCVT105`-`107`, `125`, `236`, and `SA-PARAM-FORM` for a numeric value in no known form).
+
+## Signals inside macros (2026-11-27)
+- **Source:** SIMPL 4.32 compiles of a public program with one macro (ZowieTest, from the `neuralp/zowieapi` repo).
+  - As published, its 3 SIMPL+ modules don't compile in this SIMPL. A test copy with them removed from the macro gave the same 59 messages, so SIMPL leaves a failed SIMPL+ module out of the circuit.
+  - `find_problems` predicts all 59 messages of the test copy exactly: 47 warnings and 12 notices, including 6 LGCMCVT126 and 10 LGCMCVT127. The old per-level rule got 48 of them wrong.
+- **One circuit:** SIMPL's compiler treats a placed macro as part of the program.
+  - A signal on a macro pin and the macro's own signal on that pin (through the Argument Definition, pin n to pin n) are one net.
+  - The net is judged as a whole: 102 when something reads it and nothing drives it, 103 when something drives it and nothing reads it.
+  - It's reported once, by the outer name. Example: `Zowie_ndi_1_name$` leaves the macro, is read inside by Make String Permanent and is driven by nothing, so SIMPL reported 102, not 103.
+  - Signals wholly inside a macro get LGCMCVT126 (warning, though the help calls it a notice) or LGCMCVT127 (notice): `Signal "x" in S-2 (Module name <path of the .umc>) has no driving source.` That's once per placed copy, with the copy's symbol number.
+- **Digital, Analog and Serial Force** (codes 471, 472, 470) only fix a signal's type, and SIMPL doesn't count their inputs as destinations.
+  - 16 macro signals on a Serial Force alone drew no message.
+  - A signal with a driver and only a Serial Force drew 103.
+- **Inferred, not yet seen:**
+  - An undriven outer signal into a macro pin that nothing reads inside gives no message (5 corpus cases).
+  - An unwired macro input pin counts as held at 0: SIMPL's help gives warning 124 for it, not 126.
+  - The symbol number of a macro inside a macro. These messages are marked unconfirmed.
+- **Corpus effect:**
+  - Programs without macros are unchanged, apart from the Force rule (one file).
+  - In the 211 programs with macros, 146 of the old messages go away:
+    - 106 are signals read inside a macro;
+    - 35 are signals driven inside one;
+    - 5 are the inferred case above.
+  - A macro whose file isn't found still counts as a plain symbol.
