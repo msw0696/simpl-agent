@@ -435,12 +435,17 @@ class Tools(EditTools):
         return hits[0]
 
     @staticmethod
-    def _definition(p: Path, lib, s):
-        """Pin names for a symbol: a macro's or SIMPL+ module's own file, else the library."""
+    def _definition(p: Path, lib, s, prog: Program | None = None):
+        """Pin names for a symbol: a macro's or SIMPL+ module's own file, a panel extender's .chd/.sgd,
+        else the library."""
         from .corpus import INSTALLED_MODULES
 
         if s.code in (an.MACRO_CODE, an.SPLUS_CODE):
             d = an.module_definition(p, s, INSTALLED_MODULES)
+            if d is not None:
+                return d
+        if s.code == an.EXTENDER_CODE and prog is not None:
+            d = an.extender_definition(prog, s, p)
             if d is not None:
                 return d
         return lib.get(s.code) if lib else None
@@ -500,7 +505,7 @@ class Tools(EditTools):
         p, rev, prog, lib = self._load(path)
         h = self._symbol_ref(prog, symbol)
         s = prog.symbols[h]
-        ls = self._definition(p, lib, s)
+        ls = self._definition(p, lib, s, prog)
 
         def pins(letter: str, conns: dict[int, int], total_key: str) -> list[dict[str, Any]]:
             total = s.record.get(total_key)
@@ -510,6 +515,14 @@ class Tools(EditTools):
                     for n in range(1, n_max + 1)]
 
         comments = an.comment_lines(s)
+        extender = None
+        if s.code == an.EXTENDER_CODE:
+            ext = an.gui_extension(prog, an.panel_of(prog, h), p)
+            extender = {"smart_object_id": (s.record.get("P1") or "").rstrip("dD") or None,
+                        "file": ext, "defined": ls is not None and ls.code == an.EXTENDER_CODE}
+            if not extender["defined"]:
+                extender["note"] = ("The panel's .chd/.sgd file isn't beside the program (or doesn't define this "
+                                    "object), so pin names are generic. SIMPL needs that file too.")
         changed = None
         if s.code == an.SPLUS_CODE:
             from .corpus import INSTALLED_MODULES
@@ -520,6 +533,7 @@ class Tools(EditTools):
                            "placed positions, so they may not be the pins these signals were wired to.")
         return {
             **({"module_changed": changed} if changed else {}),
+            **({"panel_extender": extender} if extender else {}),
             "path": str(p), "revision": rev, "symbol": f"#{h}", "name": an.display_name(s, lib),
             "library": {"code": s.code, "name": ls.name if ls else None},
             "folder": an.folder_path(prog, h, lib), "simpl_number": an.simpl_number(prog, h),
@@ -558,7 +572,7 @@ class Tools(EditTools):
             out = []
             for sh, n in pairs[:limit]:
                 s = prog.symbols[sh]
-                ls = self._definition(p, lib, s)
+                ls = self._definition(p, lib, s, prog)
                 out.append({**self._brief(prog, lib, sh), "pin": f"{letter}{n}",
                             "pin_name": an.pin_label(ls, s, letter, n)})
             return out
@@ -839,6 +853,11 @@ class Tools(EditTools):
 
         p, rev, prog, lib = self._load(path)
         rows = dv.device_rows(prog, limit=max(1, min(int(limit), 2000)))
+        for row in rows:  # a panel's Smart Graphics (.sgd) or CH5 contract (.chd) file
+            d = prog.devices.get(int(row["device"][1:]))
+            ext = an.gui_extension(prog, d, p) if d is not None else None
+            if ext is not None:
+                row["gui_extension"] = ext
         hd = prog.header
         cnh = hd.get("CnH") if hd is not None else None
         proc = prog.devices.get(int(cnh)) if cnh and cnh.isdigit() else None
@@ -1094,7 +1113,7 @@ class Tools(EditTools):
                 drivers.append({"symbol": f"#{h}", "name": an.display_name(s, lib), "device": f"#{s.device}",
                                 "note": "comes from the device itself (a press, feedback or received data)"})
                 continue
-            ls = self._definition(p, lib, s)
+            ls = self._definition(p, lib, s, prog)
             ins = [(an.pin_label(ls, s, "I", n), prog.signals[x].name)
                    for n, x in sorted(s.inputs.items()) if x in prog.signals and not prog.signals[x].name.startswith("//")
                    and x not in set(prog.builtin_signals.values())]

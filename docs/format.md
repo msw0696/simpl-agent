@@ -366,3 +366,15 @@ A module written for the conference-room test program (`DisplayFeedback.usp`: `B
 - **Evidence:** this held for all 64,525 wired pins of such devices in the SIMPL 4.x corpus, with 0 exceptions. It's why a DIN-1DIM4 placed with no list-1 pins has an analog pin 1 although `InputSigType1` says Digital.
 - **Live check:** `connect` put new analog and serial signals on an XPanel 3.0's analog and serial joins with no type given. It compiled with exactly the predicted messages, and SIMPL re-saved it byte for byte.
 - **The slim index** now keeps every list-2/3 type (about 0.7 MB). It gives the same pin types as the full library on all 155,914 device pins in the corpus.
+
+## Panel extenders: Smart Graphics and CH5 contracts (2026-11-27)
+- **The file:** a panel device's `VtpH` points to a `VTP` record: `GuiExtType=1` with a VT Pro-e `.sgd` (Smart Graphics), or `GuiExtType=2` with a CH5 `.chd` (contract) plus `ContractID`. `SGDFile` is the path, usually relative to the program. The corpus has 55 `.sgd` and 17 `.chd` references, 9 `.sgd` with no `GuiExtType`, and 24 VTP records with no file.
+- **Its format:** both files use the bracket record format of `.smw`/`.umc`, with `;` comment lines.
+  - Each object is a `Symbol` with per-list Min/Max counts and `InputCue`/`InputList2Cue`/`InputList3Cue` (and output) names. Its `Hint` gives the ID: "(Smart Object ID=10)" or "(Control Join Id 1)".
+  - A `.chd` also has `CHD` records (`ChdCode`, `ParentChdFolder`) and `Dp` parameter records. Its signature is `Sgntr=CHD`.
+- **Placed objects:** each is an `Sm` record with `SmC=2942` under the panel's logic symbol, directly or inside contract folders (`SmC=6774`, e.g. "Keypad Attributes"). It has `Nm` = the object's name, `P1` = its Smart Object ID, and `ChdH` on contract components. Pins run through the digital, analog and serial lists with the record's sizes; a serial-only component has no `n1I`.
+- **Matching a placed object to its definition:** by Smart Object ID (`P1` against the Hint), else by name.
+  - 195 corpus extenders match both ways and 12 match only by ID (panels that copied another panel's objects). 3 match neither: their program is newer than the file in its repo.
+  - All 207 that match fit their definition's pin counts.
+  - The files came from the programs' own GitHub repos (`tools/fetch_panel_files.py`), saved beside the corpus copies.
+- **Open:** SIMPL compiled a public program with a Smart Graphics XPanel (LibraryProgram) with 40 warnings and 42 notices that `find_problems` doesn't predict. A re-test from a fresh copy, with and without its `.sgd`, stopped at "Incomplete Symbols" instead, and `find_problems` sees nothing incomplete. Corpus copies keep git's LF line endings, which SIMPL rejects with a bare "File Error" until they're converted to CRLF.

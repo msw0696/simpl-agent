@@ -139,6 +139,72 @@ def module_definition(program_path: Path | None, symbol: Symbol,
     return None
 
 
+EXTENDER_CODE = 2942  # a panel's Smart Graphics object or CH5 contract component
+GUI_EXTENSION_KINDS = {"1": "Smart Graphics (.sgd)", "2": "CH5 contract (.chd)"}
+_SOID_RE = re.compile(r"(?:Smart Object ID\s*=\s*|Control Join Id\s+)(\d+)", re.I)
+
+
+@lru_cache(maxsize=64)
+def _extender_file_cached(path: str, mtime: float) -> tuple[dict[str, str], ...]:
+    raw = rawfile.parse_text(Path(path).read_bytes().decode("latin-1"))
+    return tuple(r.as_dict() for r in raw.of_type("Symbol"))
+
+
+def panel_of(prog: Program, h: int):
+    """The device whose logic symbol a (possibly nested) extender sits under, or None."""
+    by_symbol = {d.symbol: d for d in prog.devices.values() if d.symbol is not None}
+    cur = prog.symbols[h].parent if h in prog.symbols else None
+    seen = set()
+    while cur is not None and cur in prog.symbols and cur not in seen:
+        seen.add(cur)
+        if cur in by_symbol:
+            return by_symbol[cur]
+        cur = prog.symbols[cur].parent
+    return None
+
+
+def gui_extension(prog: Program, device, program_path: Path | None) -> dict | None:
+    """A panel's GUI extension file (VTP record): kind, path as written, and where it is."""
+    vh = device.record.get("VtpH") if device is not None else None
+    v = next((r for r in prog.raw.of_type("VTP") if r.get("H") == vh), None) if vh else None
+    if v is None or not v.get("SGDFile"):
+        return None
+    written = v.get("SGDFile")
+    p = Path(written.replace("\\", "/"))
+    if not p.is_absolute() and program_path is not None:
+        p = program_path.parent / p
+    return {"kind": GUI_EXTENSION_KINDS.get(v.get("GuiExtType") or "", "unknown"), "file": written,
+            "found": p.is_file(), "path": str(p), "contract_id": v.get("ContractID")}
+
+
+def extender_definition(prog: Program, symbol: Symbol, program_path: Path | None) -> LibSymbol | None:
+    """Pin names for a panel extender (SmC 2942), from the panel's .chd contract or .sgd Smart Graphics file.
+
+    The extender sits under the panel's logic symbol (possibly in contract folders); the panel's
+    device points to a VTP record naming the file, relative to the program. The file holds one
+    Symbol per object; the placed extender's P1 is its Smart Object ID (control join ID), given in
+    each definition's Hint. Matched by that ID, else by name: 207 of 207 corpus extenders with a
+    file fit their definition's pin counts (12 only by ID: panels that copied another's objects).
+    """
+    if symbol.code != EXTENDER_CODE:
+        return None
+    ext = gui_extension(prog, panel_of(prog, symbol.handle), program_path)
+    if ext is None or not ext["found"]:
+        return None
+    path = Path(ext["path"])
+    try:
+        defs = _extender_file_cached(str(path), path.stat().st_mtime)
+    except (OSError, ValueError):
+        return None
+    soid = (symbol.record.get("P1") or "").strip().rstrip("dD")
+    hit = next((d for d in defs if (m := _SOID_RE.search(d.get("Hint") or "")) and m.group(1) == soid), None)
+    if hit is None:
+        hit = next((d for d in defs if (d.get("Name") or "").lower() == (symbol.name or "").lower()), None)
+    if hit is None:
+        return None
+    return LibSymbol(code=EXTENDER_CODE, name=hit.get("Name") or symbol.name or "", fields=hit)
+
+
 UNUSED_PIN = "[~UNUSED~]"
 REFERENCE_NAME = "[Reference Name]"
 
@@ -240,25 +306,28 @@ def pin_label(ls: LibSymbol | None, symbol: Symbol, letter: str, n: int) -> str:
     """The library's name for input/output/param pin ``n`` (I/O/P), or a generic one.
 
     A name ending in '#' repeats: with cues [enable, i#], pin 2 is i1, pin 3 is i2.
-    Pins past the first pin list (panels, devices) get a generic name for now.
+    On symbols with several pin lists (panels, modules, extenders) pins run through list 1, 2
+    and 3 with the placed record's sizes; a list with no name for a pin gives 'list N pin k'.
     """
     generic = {"I": f"i{n}", "O": f"o{n}", "P": f"p{n}"}[letter]
     if ls is None:
         return generic
     prefix = {"I": "InputCue", "O": "OutputCue", "P": "ParamCue"}[letter]
-    first_list = {"I": "n1I", "O": "n1O"}.get(letter)
-    if first_list:
-        n1 = symbol.record.get(first_list)
-        if n1 and n1.isdigit() and n > int(n1):
-            # Pins after the first list continue into list 2 (analog/serial pins on
-            # modules and panels): pin n1+k is the list's k-th cue.
-            list_prefix = {"I": "InputList2Cue", "O": "OutputList2Cue"}[letter]
-            k = n - int(n1)
-            cue = _cue(ls.cues(list_prefix), k)
+    if letter in "IO":
+        side = "Input" if letter == "I" else "Output"
+        rec = symbol.record
+        multi = (ls.fields.get("HasExtraPinLists") == "True" or bool(ls.cues(f"{side}List2Cue"))
+                 or bool(ls.cues(f"{side}List3Cue")))
+        n1 = _int(rec.get("n1I" if letter == "I" else "n1O"))
+        if multi and (n1 or rec.get("n1I" if letter == "I" else "n1O") is None) and n > n1:
+            # Pins run through list 1 (digital), list 2 (analog) and list 3 (serial) with the placed
+            # record's sizes; SIMPL leaves out a zero n1I, as on a serial-only contract component.
+            n2 = _int(rec.get("n2I")) if letter == "I" else _int(rec.get("mO")) - n1
+            lst, k = (2, n - n1) if (n <= n1 + n2 or not ls.cues(f"{side}List3Cue")) else (3, n - n1 - n2)
+            cue = _cue(ls.cues(f"{side}List{lst}Cue"), k)
             if cue is not None:
                 return cue
-            if ls.fields.get("HasExtraPinLists") == "True" or ls.cues(list_prefix):
-                return f"list 2 pin {k}"
+            return f"list {lst} pin {k}"
     return _cue(ls.cues(prefix), n) or generic
 
 

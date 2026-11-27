@@ -135,7 +135,8 @@ These are built into the tools and the skill:
 - Macro files (`.umc`/`.cmc`) are handled: a macro's arguments count as its own inputs and outputs. Module pins show their real names from the module files.
 - **Checked against SIMPL 4.32:** ten hand-compiled test files, where `find_problems` printed the same messages SIMPL did. That covers Buffers sharing an output, several analog drivers, `//` placeholder signals, and second drivers when a macro or SIMPL+ module is one of them (SIMPL doesn't warn).
 - **Real job:** on a public DMPS3-4K-150-C classroom program (478 logic symbols, macros, SIMPL+ and SIMPL#), SIMPL compiled clean and `find_problems` reported nothing.
-- **Known gap:** signals wired to Smart Graphics list extenders (`.ced`) under an XPanel get SIMPL warnings and notices that `find_problems` doesn't predict yet.
+- **Panel extenders:** Smart Graphics objects (VT Pro-e `.sgd`) and CH5 contract components (`.chd`) placed under a panel show their real pin names, read from the panel's file beside the program. `device_tree` names each panel's file, and `show_symbol` shows an extender's Smart Object ID and whether its file was found. All 207 corpus extenders with a file available get their definition, and all 4,406 of their wired pins get a real name.
+- **Known gap:** signals wired to Smart Graphics list extenders (`.ced`) under an XPanel get SIMPL warnings and notices that `find_problems` doesn't predict yet. A re-test on 2026-11-27 stopped earlier, at "Incomplete Symbols", both with and without the program's `.sgd`, for a reason not yet found.
 
 ### M3: Edit and safety ✅
 
