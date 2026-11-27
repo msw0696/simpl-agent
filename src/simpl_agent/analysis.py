@@ -170,11 +170,25 @@ def gui_extension(prog: Program, device, program_path: Path | None) -> dict | No
     if v is None or not v.get("SGDFile"):
         return None
     written = v.get("SGDFile")
-    p = Path(written.replace("\\", "/"))
-    if not p.is_absolute() and program_path is not None:
-        p = program_path.parent / p
-    return {"kind": GUI_EXTENSION_KINDS.get(v.get("GuiExtType") or "", "unknown"), "file": written,
-            "found": p.is_file(), "path": str(p), "contract_id": v.get("ContractID")}
+    src = Path(written.replace("\\", "/"))
+    if not src.is_absolute() and program_path is not None:
+        src = program_path.parent / src
+    # SIMPL keeps its own copy of the imported file in the program folder (<name>.sgd_ / .chd_) and
+    # opens the program from it even when the original has moved (SIMPL help: Importing GUI
+    # Extenders). Without it, SIMPL reports problems loading and comments out the extenders.
+    copy = program_path.parent / (src.name + "_") if program_path is not None else None
+    have_copy, have_src = bool(copy and copy.is_file()), src.is_file()
+    use = copy if have_copy else src
+    out = {"kind": GUI_EXTENSION_KINDS.get(v.get("GuiExtType") or "", "unknown"), "file": written,
+           "found": have_copy or have_src, "path": str(use), "contract_id": v.get("ContractID"),
+           "simpl_copy": str(copy) if have_copy else None, "source_found": have_src}
+    if have_copy and have_src:
+        try:
+            if copy.read_bytes() != src.read_bytes():
+                out["source_changed"] = True  # SIMPL offers to sync the panel's extenders
+        except OSError:
+            pass
+    return out
 
 
 def extender_definition(prog: Program, symbol: Symbol, program_path: Path | None) -> LibSymbol | None:
@@ -385,6 +399,33 @@ def module_fit_issues(prog: Program, s: Symbol, f: dict[str, str]) -> list[str]:
     return issues
 
 
+def gui_extension_problems(prog: Program, program_path: Path | None) -> list[Problem]:
+    """Panels whose Smart Graphics (.sgd) or CH5 contract (.chd) file SIMPL won't find, or whose source
+    file changed since it was imported. SIMPL's help (GUI Extender Error Lookup, 285/286/313-316):
+    without the file it comments out that panel's extenders; a changed source asks for a sync.
+    Seen in SIMPL 4.32: without the program-folder copy, "Problems Loading Program" (2026-11-27)."""
+    out: list[Problem] = []
+    if program_path is None:
+        return out
+    for d in {id(x): x for x in prog.devices.values()}.values():
+        ext = gui_extension(prog, d, program_path)
+        if ext is None:
+            continue
+        who = f"{d.name or 'panel'} at {d.address or '?'}"
+        sym = [d.symbol] if d.symbol is not None else []
+        if not ext["found"]:
+            out.append(Problem("warning", "SA-GUI-FILE-MISSING",
+                               f"{who}: its {ext['kind']} file {ext['file']!r} isn't beside the program, nor SIMPL's "
+                               "copy of it (<name>_ in the program folder). SIMPL will report problems loading the "
+                               "program and comment out the panel's extenders.", symbols=sym))
+        elif ext.get("source_changed"):
+            out.append(Problem("notice", "SA-GUI-FILE-CHANGED",
+                               f"{who}: {ext['file']!r} has changed since it was imported. SIMPL will offer to sync "
+                               "the panel's extenders when the program is opened (Manage GUI Extenders).",
+                               symbols=sym))
+    return out
+
+
 def module_problems(prog: Program, program_path: Path | None, installed: Path | None = None) -> list[Problem]:
     """Placed SIMPL+ modules that no longer fit their compiled module (.ush beside the program).
 
@@ -535,6 +576,7 @@ def find_problems(prog: Program, lib: SymbolLibrary | None,
                                f"Symbol #{s.handle} ({display_name(s, lib)}) is marked incomplete by SIMPL: a required pin is empty.",
                                symbols=[s.handle]))
     out += module_problems(prog, program_path, installed)
+    out += gui_extension_problems(prog, program_path)
     order = {"error": 0, "warning": 1, "notice": 2}
     out.sort(key=lambda p: order[p.severity])
     return out

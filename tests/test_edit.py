@@ -38,7 +38,9 @@ def test_rename_signal_changes_one_line(ed: Editor, tiny: bytes) -> None:
     assert ed.prog.symbols[5].outputs == {1: 6}  # wiring is by handle, untouched
 
 
-@pytest.mark.parametrize("bad", ["room_level", "ROOM_LEVEL", "", " x", "x ", "9lives", "Local", "a\r\nb"])
+# SIMPL's help (Naming Signals) also rules out spaces (SIMPL uses _), commas, colons, semicolons and backslashes.
+@pytest.mark.parametrize("bad", ["room_level", "ROOM_LEVEL", "", " x", "x ", "9lives", "Local", "a\r\nb",
+                                 "Power On", "a,b", "a:b", "a;b", "a\\b"])
 def test_rename_rejects_bad_names(ed: Editor, tiny: bytes, bad: str) -> None:
     with pytest.raises(EditError):
         ed.rename_signal("room_out", bad)
@@ -101,8 +103,10 @@ def test_set_program_header(ed: Editor) -> None:
     k = ed.prog.header.keys()
     assert ed.prog.header.get("PIT") == "Main" and k.index("PIT") == k.index("ZeroOnIoOk") + 1
     assert ed.prog.header.get("PgmNm") == "Sample" and k.index("PgmNm") == k.index("DvcDbVr") + 1
-    with pytest.raises(EditError, match="bad program_id_tag"):
-        ed.set_program_header(program_id_tag=" x")
+    for bad in (" x", "My Program", "Main!"):  # letters, digits, - and _ only (SIMPL's help)
+        with pytest.raises(EditError, match="bad program_id_tag"):
+            ed.set_program_header(program_id_tag=bad)
+    ed.set_program_header(program_id_tag="Room-2_Main")
     with pytest.raises(EditError, match="give"):
         ed.set_program_header()
 

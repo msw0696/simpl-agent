@@ -121,3 +121,24 @@ def test_corpus_extenders_get_their_definitions() -> None:
     if defined == 0:
         pytest.skip("no panel files in the corpus (run tools/fetch_panel_files.py)")
     assert defined >= 200 and not bad, bad[:5]
+
+
+@needs_samples
+def test_simpls_copy_of_the_file_and_missing_or_changed_files(libs, tmp_path: Path) -> None:  # noqa: F811
+    """SIMPL opens a program from its own copy of the imported file (<name>.chd_ in the program
+    folder); without either it reports problems loading; a changed source means a sync."""
+    p, h, sym = contract_program(libs, tmp_path)
+    prog = load(rawfile.read(p))
+    assert an.gui_extension_problems(prog, p) == []
+    src = tmp_path / "contract" / "Room.chd"
+    copy = tmp_path / "Room.chd_"
+    copy.write_bytes(src.read_bytes())
+    ext = an.gui_extension(prog, an.panel_of(prog, h), p)
+    assert ext["simpl_copy"] == str(copy) and ext["path"] == str(copy) and "source_changed" not in ext
+    src.write_bytes(src.read_bytes().replace(b"Title", b"Heading"))
+    assert [x.code for x in an.gui_extension_problems(prog, p)] == ["SA-GUI-FILE-CHANGED"]
+    assert an.pin_label(an.extender_definition(prog, prog.symbols[h], p), prog.symbols[h], "I", 3) == "Title"
+    src.unlink()
+    copy.unlink()
+    (probs,) = [an.gui_extension_problems(prog, p)]
+    assert [x.code for x in probs] == ["SA-GUI-FILE-MISSING"] and probs[0].symbols == [sym]

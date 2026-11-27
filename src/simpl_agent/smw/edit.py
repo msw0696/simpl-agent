@@ -22,7 +22,11 @@ from .model import Program, Symbol, load
 from .rawfile import RawFile, Record
 
 SIGNAL_TYPE_CODES = {"digital": None, "analog": "2", "serial": "4"}
-NAME_RE = re.compile(r"^[^\x00-\x20\x7f-\xff0-9][\x20-\x7e]*$")
+# SIMPL's help ("Naming Signals"): not starting with a digit; no , : ; or \; SIMPL turns a space into "_".
+# Every signal name in the 380 public programs fits (2026-11-27).
+NAME_RE = re.compile(r"^[^\x00-\x20\x7f-\xff0-9,:;\\][^\x00-\x20\x7f-\xff,:;\\]*$")
+# SIMPL's help ("Edit Program Header"): letters, digits, - and _. All 294 corpus tags fit.
+PIT_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 MAX_NAME = 100
 FOLDER_CODE = 156
 
@@ -120,8 +124,8 @@ class Editor:
     def check_new_name(self, name: str, *, ignore: int | None = None) -> None:
         if not name or len(name) > MAX_NAME or name != name.strip() or not NAME_RE.match(name):
             raise EditError(
-                f"bad signal name {name!r}: use printable ASCII, up to {MAX_NAME} characters, "
-                "not starting with a digit or space"
+                f"bad signal name {name!r}: use printable ASCII, up to {MAX_NAME} characters, not starting with "
+                "a digit, with no spaces (SIMPL uses _), commas, colons, semicolons or backslashes"
             )
         if name.lower() in ("0", "1", "local"):
             raise EditError(f"{name!r} is a built-in signal")
@@ -539,6 +543,8 @@ class Editor:
         for label, v in (("program_id_tag", program_id_tag), ("program_name", program_name)):
             if v is not None and (not v.strip() or v != v.strip() or any(c in v for c in "\r\n\\[]=")):
                 raise EditError(f"bad {label} {v!r}: one line, no surrounding spaces, no \\ [ ] =")
+        if program_id_tag is not None and not PIT_RE.match(program_id_tag):
+            raise EditError(f"bad program_id_tag {program_id_tag!r}: SIMPL allows letters, digits, - and _ only")
         if program_id_tag is not None:
             if "PIT" not in hd and "ZeroOnIoOk" not in hd:
                 raise EditError("this header has no PIT line, and where SIMPL puts one isn't known for it")
